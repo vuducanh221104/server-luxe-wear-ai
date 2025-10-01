@@ -1,0 +1,373 @@
+---
+description: Guidelines for backend development with TypeScript, Express, Supabase, and Pinecone
+globs: src/**/*.ts
+---
+
+# Backend Development Guidelines
+
+## Project Context
+
+This is a TypeScript-based Express.js backend for an AI-powered fashion assistant.
+
+### Tech Stack
+
+- **Language**: TypeScript
+- **Framework**: Express.js
+- **Database**: Supabase (PostgreSQL)
+- **Vector DB**: Pinecone
+- **AI**: Google Gemini
+- **Queue**: Bull (Redis)
+- **Logger**: Winston
+- **Testing**: Jest + Supertest
+
+## Code Organization
+
+### File Structure
+
+Reference [STRUCTURE.md](mdc:STRUCTURE.md) for complete architecture.
+
+Key principles:
+
+- **Controllers**: Handle HTTP requests, call services, return responses
+- **Services**: Business logic, no HTTP knowledge
+- **Middlewares**: Request processing pipeline
+- **Validators**: Input validation schemas
+- **Utils**: Reusable helper functions
+
+## TypeScript Best Practices
+
+### Type Safety
+
+```typescript
+// ✅ DO: Define explicit interfaces
+interface CreateAgentRequest {
+  name: string;
+  systemPrompt: string;
+  userId: string;
+}
+
+// ✅ DO: Use strict typing
+const createAgent = async (data: CreateAgentRequest): Promise<Agent> => {
+  // implementation
+};
+
+// ❌ DON'T: Use 'any'
+const createAgent = async (data: any) => {
+  // avoid this
+};
+```
+
+### Async/Await
+
+```typescript
+// ✅ DO: Proper error handling
+try {
+  const result = await service.doSomething();
+  return successResponse(res, result);
+} catch (error) {
+  return errorResponse(res, error.message, 500);
+}
+
+// ❌ DON'T: Ignore errors
+const result = await service.doSomething();
+return result;
+```
+
+## API Design
+
+### RESTful Conventions
+
+```typescript
+// ✅ DO: Follow REST principles
+GET    /api/agents       // List all
+GET    /api/agents/:id   // Get one
+POST   /api/agents       // Create
+PUT    /api/agents/:id   // Update
+DELETE /api/agents/:id   // Delete
+
+// ✅ DO: Use proper status codes
+201 - Created
+200 - Success
+400 - Bad Request
+401 - Unauthorized
+404 - Not Found
+500 - Server Error
+```
+
+### Response Format
+
+```typescript
+// ✅ DO: Consistent response structure
+{
+  "success": true,
+  "message": "Operation successful",
+  "data": { /* payload */ }
+}
+
+{
+  "success": false,
+  "message": "Error message",
+  "errors": [/* validation errors */]
+}
+```
+
+## Security Guidelines
+
+### Authentication
+
+```typescript
+// ✅ DO: Always validate tokens
+const authMiddleware = async (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return errorResponse(res, "No token", 401);
+
+  const user = await verifyToken(token);
+  req.user = user;
+  next();
+};
+```
+
+### Input Validation
+
+```typescript
+// ✅ DO: Validate all inputs
+import { body, validationResult } from "express-validator";
+
+export const createAgentValidator = [
+  body("name").trim().notEmpty().isLength({ min: 3, max: 100 }),
+  body("systemPrompt").notEmpty(),
+  // handle validation in middleware
+];
+```
+
+### Rate Limiting
+
+```typescript
+// ✅ DO: Protect expensive endpoints
+import rateLimit from "express-rate-limit";
+
+const aiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // limit each IP to 10 requests per window
+  message: "Too many AI requests",
+});
+
+app.post("/api/agents/:id/chat", aiRateLimiter, chatController);
+```
+
+## Database Patterns
+
+### Supabase Service
+
+```typescript
+// ✅ DO: Use service layer for database operations
+export const getAgentById = async (id: string): Promise<Agent | null> => {
+  const { data, error } = await supabaseAdmin
+    .from("agents")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data;
+};
+```
+
+### Vector Search (Pinecone)
+
+```typescript
+// ✅ DO: Implement proper vector search
+export const searchKnowledge = async (
+  query: string,
+  userId: string,
+  topK: number = 5
+): Promise<SearchResult[]> => {
+  const queryVector = await vectorizeText(query);
+  const index = getPineconeIndex();
+
+  const results = await index.query({
+    vector: queryVector,
+    topK,
+    filter: { user_id: userId },
+    includeMetadata: true,
+  });
+
+  return results.matches;
+};
+```
+
+## Error Handling
+
+### Service Layer
+
+```typescript
+// ✅ DO: Throw descriptive errors
+export const createAgent = async (data: AgentData): Promise<Agent> => {
+  if (!data.name) {
+    throw new Error("Agent name is required");
+  }
+
+  const existing = await findAgentByName(data.name);
+  if (existing) {
+    throw new Error("Agent name already exists");
+  }
+
+  return await supabaseService.insert("agents", data);
+};
+```
+
+### Controller Layer
+
+```typescript
+// ✅ DO: Catch and format errors properly
+export const createAgent = async (req: Request, res: Response) => {
+  try {
+    const agent = await agentService.createAgent(req.body);
+    return successResponse(res, agent, "Agent created", 201);
+  } catch (error) {
+    logger.error("Create agent error:", error);
+    return errorResponse(res, error.message, 500);
+  }
+};
+```
+
+## Logging
+
+### Use Winston Logger
+
+```typescript
+// ✅ DO: Log important events
+import logger from "@/config/logger";
+
+logger.info("Agent created", { agentId, userId });
+logger.warn("Rate limit approaching", { userId, requestCount });
+logger.error("Database error", { error: error.message, stack: error.stack });
+
+// ❌ DON'T: Use console.log in production
+console.log("This will be removed");
+```
+
+## Testing
+
+### Unit Tests
+
+```typescript
+// ✅ DO: Test business logic
+describe("AgentService", () => {
+  it("should create agent with valid data", async () => {
+    const agentData = { name: "Test Agent", userId: "123" };
+    const result = await agentService.createAgent(agentData);
+
+    expect(result).toBeDefined();
+    expect(result.name).toBe("Test Agent");
+  });
+
+  it("should throw error for duplicate name", async () => {
+    await expect(
+      agentService.createAgent({ name: "Existing" })
+    ).rejects.toThrow("Agent name already exists");
+  });
+});
+```
+
+### Integration Tests
+
+```typescript
+// ✅ DO: Test API endpoints
+describe("POST /api/agents", () => {
+  it("should create agent with auth", async () => {
+    const response = await request(app)
+      .post("/api/agents")
+      .set("Authorization", `Bearer ${validToken}`)
+      .send({ name: "New Agent" })
+      .expect(201);
+
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.name).toBe("New Agent");
+  });
+});
+```
+
+## Performance
+
+### Caching
+
+```typescript
+// ✅ DO: Cache expensive operations
+const cache = new Map();
+
+export const getAgentWithCache = async (id: string): Promise<Agent> => {
+  const cacheKey = `agent:${id}`;
+
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  const agent = await getAgentById(id);
+  cache.set(cacheKey, agent);
+
+  return agent;
+};
+```
+
+### Batch Operations
+
+```typescript
+// ✅ DO: Batch database operations when possible
+const agents = await supabaseAdmin
+  .from("agents")
+  .select("*")
+  .in("id", agentIds); // Better than multiple single queries
+```
+
+## Code Quality
+
+### Keep Functions Small
+
+```typescript
+// ✅ DO: Single responsibility
+const validateInput = (data: AgentData): void => {
+  if (!data.name) throw new Error("Name required");
+  if (!data.userId) throw new Error("UserId required");
+};
+
+const enrichAgentData = (data: AgentData): EnrichedAgentData => {
+  return {
+    ...data,
+    createdAt: new Date().toISOString(),
+    status: "active",
+  };
+};
+
+// ❌ DON'T: God functions
+const createAgentWithEverything = async (data: any) => {
+  // 500 lines of mixed validation, enrichment, DB calls, etc.
+};
+```
+
+### Use Meaningful Names
+
+```typescript
+// ✅ DO: Descriptive names
+const calculateAverageResponseTime = (responses: Response[]): number => {};
+const isUserSubscriptionActive = (user: User): boolean => {};
+
+// ❌ DON'T: Cryptic names
+const calc = (r: any[]): number => {};
+const check = (u: any): boolean => {};
+```
+
+## Environment Configuration
+
+Reference [src/config/env.ts](mdc:src/config/env.ts) for configuration.
+
+```typescript
+// ✅ DO: Validate env variables on startup
+if (!process.env.SUPABASE_URL) {
+  throw new Error("SUPABASE_URL is required");
+}
+
+// ✅ DO: Provide defaults for non-critical values
+const PORT = process.env.PORT || 3000;
+const LOG_LEVEL = process.env.LOG_LEVEL || "info";
+```

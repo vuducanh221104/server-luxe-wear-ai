@@ -1,0 +1,225 @@
+---
+description: Template and guidelines for writing Technical Design Documents (TDD)
+alwaysApply: false
+---
+
+# Technical Design Document (TDD) Template
+
+Use this template when creating technical design documents for new features or major system changes.
+
+## Document Structure
+
+### 1. Overview
+
+- **Feature/System Name**: Clear, descriptive name
+- **Author(s)**: Name(s) of the designer(s)
+- **Date**: Creation and last updated dates
+- **Status**: [Draft | In Review | Approved | Implemented]
+- **Reviewers**: List of stakeholders and reviewers
+
+**Summary**: 2-3 paragraph high-level overview of what you're building and why.
+
+### 2. Background & Context
+
+- **Problem Statement**: What problem are we solving?
+- **Current State**: How does the system work today?
+- **Why Now**: Why is this important to do now?
+- **User Stories**: Who benefits and how?
+
+### 3. Goals & Non-Goals
+
+#### Goals
+
+- Primary objectives this design aims to achieve
+- Measurable success criteria
+- User experience improvements
+
+#### Non-Goals
+
+- Explicitly state what this design will NOT address
+- Future considerations that are out of scope
+- Helps prevent scope creep
+
+### 4. System Architecture
+
+#### High-Level Architecture
+
+```
+[Include architecture diagrams]
+- System components
+- Data flow diagrams
+- Integration points
+```
+
+#### Technology Stack
+
+- **Frontend**: Technologies and frameworks
+- **Backend**: Languages, frameworks, runtime
+- **Database**: Type, schema design
+- **Infrastructure**: Cloud services, hosting
+- **Third-party Services**: External APIs, integrations
+
+### 5. Detailed Design
+
+#### 5.1 API Design
+
+```typescript
+// Define all API endpoints
+POST /api/v1/resource
+GET /api/v1/resource/:id
+PUT /api/v1/resource/:id
+DELETE /api/v1/resource/:id
+
+// Include request/response schemas
+interface CreateResourceRequest {
+  name: string;
+  description?: string;
+}
+
+interface ResourceResponse {
+  id: string;
+  name: string;
+  createdAt: Date;
+}
+```
+
+#### 5.2 Data Models
+
+```typescript
+// Database schemas
+interface User {
+  id: string;
+  email: string;
+  createdAt: timestamp;
+  updatedAt: timestamp;
+}
+
+// Include relationships, indexes, constraints
+```
+
+#### 5.3 Business Logic
+
+- Core algorithms and workflows
+- State machines if applicable
+- Error handling strategies
+
+#### 5.4 User Interface (if applicable)
+
+- Wireframes or mockups
+- User flows
+- Accessibility considerations
+
+### 6. Security Considerations
+
+- **Authentication**: How users are authenticated
+- **Authorization**: Permission and access control
+- **Data Protection**: Encryption, PII handling
+- **Input Validation**: Sanitization strategies
+- **Rate Limiting**: DDoS protection
+- **Security Risks**: Known vulnerabilities and mitigations
+
+### 7. Performance & Scalability
+
+- **Expected Load**: Traffic estimates, concurrent users
+- **Performance Requirements**: Response times, throughput
+- **Scalability Strategy**: Horizontal/vertical scaling plans
+- **Caching Strategy**: What to cache and where
+- **Database Optimization**: Indexes, query optimization
+- **Bottlenecks**: Known performance concerns
+
+### 8. Observability & Monitoring
+
+- **Logging Strategy**: What to log, log levels
+- **Metrics**: Key metrics to track
+  - Response times
+  - Error rates
+  - Resource usage
+- **Alerting**: When to trigger alerts
+- **Tracing**: Distributed tracing setup
+
+### 9. Testing Strategy
+
+- **Unit Tests**: Coverage goals, testing frameworks
+- **Integration Tests**: Key integration points
+- **E2E Tests**: Critical user flows
+- **Load Tests**: Performance validation
+- **Security Tests**: Vulnerability scanning
+
+### 10. Migration & Rollout Plan
+
+- **Deployment Strategy**: Blue-green, canary, rolling
+- **Feature Flags**: Progressive rollout plan
+- **Rollback Plan**: How to safely revert
+- **Data Migration**: If schema changes required
+- **Backward Compatibility**: Supporting old clients
+
+### 11. Dependencies & Risks
+
+#### Dependencies
+
+- External teams or services
+- Library/framework versions
+- Infrastructure requirements
+
+#### Risks
+
+| Risk         | Impact | Probability | Mitigation          |
+| ------------ | ------ | ----------- | ------------------- |
+| Example risk | High   | Medium      | Mitigation strategy |
+
+### 12. Alternative Approaches Considered
+
+- **Option 1**: Description, pros, cons
+- **Option 2**: Description, pros, cons
+- **Why chosen approach**: Reasoning for final decision
+
+### 13. Timeline & Milestones
+
+- **Phase 1**: Design & Review (dates)
+- **Phase 2**: Implementation (dates)
+- **Phase 3**: Testing (dates)
+- **Phase 4**: Deployment (dates)
+
+### 14. Open Questions
+
+- List any unresolved questions
+- Areas needing further research
+- Decisions pending stakeholder input
+
+### 15. References
+
+- Related docs, RFCs, tickets
+- External documentation
+- Research papers or articles
+
+---
+
+## Best Practices When Writing TDD
+
+1. **Keep It Simple**: Write for your audience (engineers, PMs, stakeholders)
+2. **Use Diagrams**: A picture is worth a thousand words
+3. **Be Specific**: Avoid vague statements, provide concrete examples
+4. **Consider Trade-offs**: Discuss pros/cons of design decisions
+5. **Update Regularly**: Keep the doc in sync with implementation
+6. **Get Feedback Early**: Share drafts before full implementation
+7. **Link to Code**: Reference implementation files when ready
+8. **Version Control**: Track changes over time
+
+## Common Pitfalls to Avoid
+
+- ❌ Too high-level (no implementation details)
+- ❌ Too low-level (gets outdated quickly)
+- ❌ No diagrams or visual aids
+- ❌ Missing error handling scenarios
+- ❌ Ignoring security or performance
+- ❌ No consideration of alternatives
+- ❌ Unclear success metrics
+
+## Example Reference Structure
+
+For this project [server-luxe-wear-ai](mdc:README.md):
+
+- Refer to [STRUCTURE.md](mdc:STRUCTURE.md) for architecture
+- Check [package.json](mdc:package.json) for tech stack
+- Review [tsconfig.json](mdc:tsconfig.json) for TypeScript config
+- See config files in [src/config/](mdc:src/config) for system setup

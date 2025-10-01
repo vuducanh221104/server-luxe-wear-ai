@@ -1,0 +1,2 @@
+// AI configuration (Gemini)
+

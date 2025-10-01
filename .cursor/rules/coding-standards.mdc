@@ -1,0 +1,828 @@
+---
+description: Coding standards and conventions for the TypeScript backend project
+globs: src/**/*.ts,tests/**/*.ts
+---
+
+# Coding Standards
+
+Coding standards and best practices for the Luxe Wear AI backend project.
+
+## 📋 Table of Contents
+
+1. [TypeScript Standards](#typescript-standards)
+2. [Code Formatting](#code-formatting)
+3. [Naming Conventions](#naming-conventions)
+4. [File Organization](#file-organization)
+5. [Comments & Documentation](#comments--documentation)
+6. [Error Handling](#error-handling)
+7. [Testing Standards](#testing-standards)
+8. [Git Standards](#git-standards)
+9. [Code Review Checklist](#code-review-checklist)
+
+---
+
+## TypeScript Standards
+
+### Strict Mode
+```typescript
+// tsconfig.json must have strict: true
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true
+  }
+}
+```
+
+### Type Definitions
+
+#### ✅ DO: Define explicit types
+```typescript
+// ✅ Good
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: Date;
+}
+
+const getUser = async (id: string): Promise<User | null> => {
+  // implementation
+};
+
+// ✅ Good: Use type for unions/intersections
+type UserRole = "admin" | "user" | "guest";
+type AuthenticatedUser = User & { role: UserRole };
+```
+
+#### ❌ DON'T: Use any or implicit types
+```typescript
+// ❌ Bad
+const getUser = async (id: any) => {
+  // avoid any
+};
+
+// ❌ Bad
+const data = { name: "test" }; // missing type annotation
+```
+
+### Interfaces vs Types
+
+```typescript
+// ✅ Use interface for objects that can be extended
+interface BaseUser {
+  id: string;
+  email: string;
+}
+
+interface AdminUser extends BaseUser {
+  permissions: string[];
+}
+
+// ✅ Use type for unions, intersections, primitives
+type Status = "active" | "inactive" | "pending";
+type ID = string | number;
+type Result<T> = { success: true; data: T } | { success: false; error: string };
+```
+
+### Nullability
+
+```typescript
+// ✅ DO: Be explicit about null/undefined
+interface Config {
+  apiKey: string;
+  timeout?: number; // Optional
+  retries: number | null; // Can be null
+}
+
+// ✅ DO: Use optional chaining
+const timeout = config?.timeout ?? 5000;
+
+// ✅ DO: Use nullish coalescing
+const name = user.name ?? "Unknown";
+
+// ❌ DON'T: Use ! unless absolutely certain
+const user = getUser(id)!; // Avoid if possible
+```
+
+### Enums
+
+```typescript
+// ✅ DO: Use const enum for better tree-shaking
+const enum HttpStatus {
+  OK = 200,
+  Created = 201,
+  BadRequest = 400,
+  Unauthorized = 401,
+  NotFound = 404,
+  ServerError = 500,
+}
+
+// ✅ DO: Or use string literal types
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+
+// ❌ DON'T: Use regular enums unless needed
+enum Color { // Avoid
+  Red,
+  Green,
+  Blue,
+}
+```
+
+---
+
+## Code Formatting
+
+### Prettier Configuration
+```json
+{
+  "semi": true,
+  "trailingComma": "es5",
+  "singleQuote": false,
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "arrowParens": "always",
+  "endOfLine": "lf"
+}
+```
+
+### String Quotes
+```typescript
+// ✅ Use double quotes for strings
+const message = "Hello, World!";
+const query = "SELECT * FROM users";
+
+// ✅ Use backticks for template literals
+const greeting = `Hello, ${name}!`;
+const multiline = `
+  This is a
+  multiline string
+`;
+```
+
+### Semicolons
+```typescript
+// ✅ Always use semicolons
+const x = 5;
+const greet = () => {
+  console.log("Hello");
+};
+```
+
+### Line Length
+```typescript
+// ✅ Keep lines under 100 characters
+// ✅ Break long lines logically
+const result = await supabaseAdmin
+  .from("users")
+  .select("id, email, name")
+  .eq("status", "active")
+  .order("created_at", { ascending: false })
+  .limit(10);
+
+// ✅ Break long function signatures
+const createUserWithPreferences = async (
+  email: string,
+  password: string,
+  preferences: UserPreferences,
+  metadata?: Metadata
+): Promise<User> => {
+  // implementation
+};
+```
+
+### Spacing & Indentation
+```typescript
+// ✅ Use 2 spaces for indentation
+// ✅ Add blank lines between logical sections
+
+export const createAgent = async (data: AgentData): Promise<Agent> => {
+  // Validation
+  if (!data.name) {
+    throw new Error("Name is required");
+  }
+
+  // Check for existing
+  const existing = await findAgentByName(data.name);
+  if (existing) {
+    throw new Error("Agent already exists");
+  }
+
+  // Create new agent
+  const agent = await supabaseService.insert("agents", data);
+
+  // Log creation
+  logger.info("Agent created", { agentId: agent.id });
+
+  return agent;
+};
+```
+
+---
+
+## Naming Conventions
+
+### Files & Directories
+```
+✅ Good:
+src/
+  controllers/
+    user.controller.ts
+    auth.controller.ts
+  services/
+    agent.service.ts
+  utils/
+    response.ts
+  types/
+    index.ts
+
+❌ Bad:
+src/
+  controllers/
+    UserController.ts
+    auth_controller.ts
+  services/
+    AgentService.ts
+```
+
+### Variables & Constants
+```typescript
+// ✅ camelCase for variables and functions
+const userName = "John";
+const isActive = true;
+const getUserById = async (id: string) => {};
+
+// ✅ SCREAMING_SNAKE_CASE for constants
+const MAX_RETRY_ATTEMPTS = 3;
+const API_BASE_URL = "https://api.example.com";
+const DEFAULT_TIMEOUT_MS = 5000;
+
+// ✅ Prefix booleans with is/has/should/can
+const isAuthenticated = true;
+const hasPermission = false;
+const shouldRetry = true;
+const canEdit = false;
+```
+
+### Interfaces & Types
+```typescript
+// ✅ PascalCase for interfaces and types
+interface User {
+  id: string;
+  email: string;
+}
+
+type UserRole = "admin" | "user";
+
+// ✅ No I prefix for interfaces (TypeScript convention)
+// ✅ Good
+interface User {}
+
+// ❌ Bad (C# style)
+interface IUser {}
+```
+
+### Classes
+```typescript
+// ✅ PascalCase for classes
+class UserService {
+  private readonly db: Database;
+
+  constructor(db: Database) {
+    this.db = db;
+  }
+
+  public async getUser(id: string): Promise<User> {
+    // implementation
+  }
+}
+
+// ✅ prefix private members with _
+class Agent {
+  private _name: string;
+  private _systemPrompt: string;
+
+  get name(): string {
+    return this._name;
+  }
+}
+```
+
+### Functions
+```typescript
+// ✅ Verb-noun pattern for functions
+const createUser = async () => {};
+const fetchAgents = async () => {};
+const validateInput = () => {};
+const transformData = () => {};
+
+// ✅ Specific names over generic
+// Good
+const getUsersByRole = async (role: string) => {};
+const calculateTotalPrice = (items: Item[]) => {};
+
+// Bad
+const get = async () => {};
+const process = () => {};
+```
+
+### Event Handlers
+```typescript
+// ✅ Use handle prefix for event handlers
+const handleSubmit = async (event: SubmitEvent) => {};
+const handleClick = () => {};
+const handleUserLogin = async (credentials: Credentials) => {};
+
+// ✅ Use on prefix for callbacks
+const onSuccess = (data: Data) => {};
+const onError = (error: Error) => {};
+```
+
+---
+
+## File Organization
+
+### Import Order
+```typescript
+// 1. Node built-ins
+import { readFile } from "fs/promises";
+import path from "path";
+
+// 2. External dependencies
+import express from "express";
+import { createClient } from "@supabase/supabase-js";
+
+// 3. Internal modules - config
+import { supabaseAdmin } from "@/config/supabase";
+import logger from "@/config/logger";
+
+// 4. Internal modules - services
+import userService from "@/services/user.service";
+import agentService from "@/services/agent.service";
+
+// 5. Internal modules - utils
+import { successResponse, errorResponse } from "@/utils/response";
+
+// 6. Types
+import type { User, Agent } from "@/types";
+```
+
+### Export Patterns
+```typescript
+// ✅ Named exports (preferred for tree-shaking)
+export const createUser = async () => {};
+export const getUser = async () => {};
+export const updateUser = async () => {};
+
+// ✅ Group related exports
+export {
+  createUser,
+  getUser,
+  updateUser,
+  deleteUser,
+};
+
+// ✅ Default export for single main export
+export default class UserService {
+  // ...
+}
+
+// ❌ Avoid mixing default and named exports in same file
+```
+
+### File Structure
+```typescript
+// Standard file structure:
+
+// 1. Imports
+import { dependencies } from "packages";
+import type { Types } from "types";
+
+// 2. Constants
+const MAX_ITEMS = 100;
+const DEFAULT_CONFIG = {};
+
+// 3. Types/Interfaces (if not in separate file)
+interface LocalType {
+  // ...
+}
+
+// 4. Helper functions (private)
+const helperFunction = () => {
+  // ...
+};
+
+// 5. Main exported functions
+export const mainFunction = async () => {
+  // ...
+};
+
+// 6. Default export (if any)
+export default MainClass;
+```
+
+---
+
+## Comments & Documentation
+
+### When to Comment
+```typescript
+// ✅ DO: Explain WHY, not WHAT
+// Using exponential backoff to handle rate limiting
+await retryWithBackoff(apiCall);
+
+// ✅ DO: Document complex algorithms
+/**
+ * Calculates cosine similarity between two vectors
+ * Formula: cos(θ) = (A · B) / (||A|| × ||B||)
+ */
+const cosineSimilarity = (vecA: number[], vecB: number[]): number => {
+  // implementation
+};
+
+// ✅ DO: Add TODO/FIXME comments
+// TODO: Implement caching for this expensive operation
+// FIXME: Handle edge case when vector is empty
+
+// ❌ DON'T: State the obvious
+// Bad: Increment counter by 1
+counter++;
+
+// Bad: Get user from database
+const user = await db.getUser(id);
+```
+
+### JSDoc Comments
+```typescript
+/**
+ * Creates a new agent with the provided configuration
+ *
+ * @param data - Agent configuration data
+ * @returns Promise resolving to the created agent
+ * @throws {Error} If agent name already exists
+ *
+ * @example
+ * ```typescript
+ * const agent = await createAgent({
+ *   name: "Fashion Assistant",
+ *   systemPrompt: "You are helpful"
+ * });
+ * ```
+ */
+export const createAgent = async (data: AgentData): Promise<Agent> => {
+  // implementation
+};
+```
+
+### File Headers
+```typescript
+/**
+ * @file agent.service.ts
+ * @description Service layer for AI agent management
+ * Handles agent creation, updates, and chat interactions
+ */
+
+// Only add file headers for complex/important files
+```
+
+---
+
+## Error Handling
+
+### Error Types
+```typescript
+// ✅ Create custom error classes
+export class ValidationError extends Error {
+  constructor(message: string, public field?: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
+export class NotFoundError extends Error {
+  constructor(resource: string, id: string) {
+    super(`${resource} with id ${id} not found`);
+    this.name = "NotFoundError";
+  }
+}
+
+export class UnauthorizedError extends Error {
+  constructor(message = "Unauthorized") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+```
+
+### Try-Catch Patterns
+```typescript
+// ✅ DO: Catch specific errors
+try {
+  const result = await riskyOperation();
+  return result;
+} catch (error) {
+  if (error instanceof ValidationError) {
+    return errorResponse(res, error.message, 400);
+  }
+  if (error instanceof NotFoundError) {
+    return errorResponse(res, error.message, 404);
+  }
+  logger.error("Unexpected error", error);
+  return errorResponse(res, "Internal server error", 500);
+}
+
+// ✅ DO: Always log errors
+catch (error) {
+  logger.error("Operation failed", {
+    error: error.message,
+    stack: error.stack,
+    context: { userId, operation: "createAgent" }
+  });
+  throw error;
+}
+
+// ❌ DON'T: Swallow errors silently
+catch (error) {
+  // This hides bugs!
+}
+```
+
+### Error Messages
+```typescript
+// ✅ Specific and actionable
+throw new Error("Email format is invalid. Please provide a valid email address");
+throw new Error("Agent name must be between 3 and 100 characters");
+
+// ❌ Generic and unhelpful
+throw new Error("Invalid input");
+throw new Error("Error");
+```
+
+---
+
+## Testing Standards
+
+### Test File Naming
+```
+src/services/agent.service.ts
+tests/unit/services/agent.service.test.ts
+
+src/controllers/auth.controller.ts
+tests/integration/auth.integration.test.ts
+```
+
+### Test Structure
+```typescript
+describe("AgentService", () => {
+  describe("createAgent", () => {
+    it("should create agent with valid data", async () => {
+      // Arrange
+      const agentData = {
+        name: "Test Agent",
+        systemPrompt: "You are helpful",
+        userId: "user-123",
+      };
+
+      // Act
+      const result = await agentService.createAgent(agentData);
+
+      // Assert
+      expect(result).toBeDefined();
+      expect(result.name).toBe("Test Agent");
+      expect(result.userId).toBe("user-123");
+    });
+
+    it("should throw error when name is missing", async () => {
+      // Arrange
+      const invalidData = { systemPrompt: "prompt" };
+
+      // Act & Assert
+      await expect(
+        agentService.createAgent(invalidData as any)
+      ).rejects.toThrow("Name is required");
+    });
+
+    it("should throw error when name already exists", async () => {
+      // Arrange
+      await agentService.createAgent({ name: "Existing" });
+
+      // Act & Assert
+      await expect(
+        agentService.createAgent({ name: "Existing" })
+      ).rejects.toThrow("Agent already exists");
+    });
+  });
+});
+```
+
+### Test Naming
+```typescript
+// ✅ Descriptive test names
+it("should return 401 when token is missing", async () => {});
+it("should create user with hashed password", async () => {});
+it("should retry 3 times before failing", async () => {});
+
+// ❌ Vague test names
+it("works", async () => {});
+it("test user creation", async () => {});
+```
+
+### Mocking
+```typescript
+// ✅ Mock external dependencies
+jest.mock("@/config/supabase", () => ({
+  supabaseAdmin: {
+    from: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ data: mockUser }),
+      }),
+    }),
+  },
+}));
+
+// ✅ Use descriptive mock data
+const mockUser: User = {
+  id: "user-123",
+  email: "test@example.com",
+  name: "Test User",
+  createdAt: new Date("2024-01-01"),
+};
+```
+
+---
+
+## Git Standards
+
+### Commit Messages
+```bash
+# Format: <type>(<scope>): <subject>
+
+# Types:
+feat:     # New feature
+fix:      # Bug fix
+docs:     # Documentation changes
+style:    # Code style (formatting, semicolons, etc)
+refactor: # Code refactoring
+test:     # Adding or updating tests
+chore:    # Maintenance tasks
+
+# Examples:
+feat(auth): add password reset functionality
+fix(agent): resolve null pointer in chat endpoint
+docs(api): update authentication documentation
+refactor(services): extract common database logic
+test(user): add integration tests for user creation
+chore(deps): update dependencies to latest versions
+```
+
+### Good Commits
+```bash
+# ✅ Good: Descriptive and specific
+git commit -m "feat(auth): implement JWT token refresh mechanism"
+git commit -m "fix(vector-search): handle empty query results gracefully"
+git commit -m "refactor(logger): extract Winston configuration to separate file"
+
+# ❌ Bad: Vague and uninformative
+git commit -m "fix stuff"
+git commit -m "updates"
+git commit -m "wip"
+```
+
+### Branch Naming
+```bash
+# Format: <type>/<description>
+
+# Examples:
+feature/user-authentication
+feature/ai-chat-history
+bugfix/agent-creation-validation
+hotfix/production-api-error
+refactor/database-service-layer
+docs/api-documentation
+```
+
+### Pull Request Guidelines
+```markdown
+## Description
+Brief description of changes
+
+## Type of Change
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
+- [ ] Documentation update
+
+## Testing
+- [ ] Unit tests added/updated
+- [ ] Integration tests added/updated
+- [ ] Manual testing completed
+
+## Checklist
+- [ ] Code follows project coding standards
+- [ ] Self-review completed
+- [ ] Comments added for complex logic
+- [ ] Documentation updated
+- [ ] No new warnings or errors
+```
+
+---
+
+## Code Review Checklist
+
+### For Author (Before Submitting)
+- [ ] Code follows naming conventions
+- [ ] All tests pass (`npm test`)
+- [ ] TypeScript compiles without errors (`npm run build`)
+- [ ] No linter errors (`npm run lint` if configured)
+- [ ] Complex logic is commented
+- [ ] Error handling is comprehensive
+- [ ] Logging is appropriate (not too much/too little)
+- [ ] Security considerations addressed
+- [ ] Performance implications considered
+- [ ] Documentation updated if needed
+
+### For Reviewer
+- [ ] Code is readable and maintainable
+- [ ] Logic is sound and efficient
+- [ ] Edge cases are handled
+- [ ] Error handling is appropriate
+- [ ] Tests are meaningful and comprehensive
+- [ ] No unnecessary complexity
+- [ ] Follows DRY principle (Don't Repeat Yourself)
+- [ ] Security vulnerabilities checked
+- [ ] Performance implications understood
+- [ ] Breaking changes flagged
+
+---
+
+## Quick Reference
+
+### Do's ✅
+- Use TypeScript strict mode
+- Define explicit types for all functions
+- Use meaningful variable names
+- Keep functions small and focused
+- Write comprehensive tests
+- Handle errors gracefully
+- Log important operations
+- Comment complex logic
+- Use async/await over callbacks
+- Validate all inputs
+
+### Don'ts ❌
+- Don't use `any` type
+- Don't swallow errors silently
+- Don't use `console.log` in production
+- Don't write functions over 50 lines
+- Don't duplicate code
+- Don't commit commented-out code
+- Don't push directly to main
+- Don't skip tests
+- Don't ignore TypeScript errors
+- Don't hardcode sensitive values
+
+---
+
+## Tools Configuration
+
+### Recommended VSCode Extensions
+```json
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "ms-vscode.vscode-typescript-next",
+    "orta.vscode-jest",
+    "usernamehw.errorlens"
+  ]
+}
+```
+
+### ESLint Configuration
+```json
+{
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended"
+  ],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/explicit-function-return-type": "warn",
+    "no-console": "warn",
+    "no-unused-vars": "off",
+    "@typescript-eslint/no-unused-vars": "error"
+  }
+}
+```
+
+---
+
+## Related Documentation
+- [Backend Development Guide](mdc:.cursor/rules/backend-development.mdc)
+- [AI Integration Guidelines](mdc:.cursor/rules/ai-integration.mdc)
+- [Technical Design Document Template](mdc:.cursor/rules/technical-design-document.mdc)
+- [Project Structure](mdc:STRUCTURE.md)
+- [README](mdc:README.md)

@@ -1,0 +1,2 @@
+// Pinecone vector database configuration
+

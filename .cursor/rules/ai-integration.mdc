@@ -1,0 +1,373 @@
+---
+description: Guidelines for integrating Google Gemini AI and vector search with Pinecone
+globs: src/services/ai.service.ts,src/services/knowledge.service.ts,src/integrations/gemini.api.ts,src/config/ai.ts,src/config/pinecone.ts
+---
+
+# AI Integration Guidelines
+
+Guidelines for working with Google Gemini AI and Pinecone vector database.
+
+## Google Gemini AI Best Practices
+
+### Prompt Engineering
+
+```typescript
+// ✅ DO: Structure prompts with clear sections
+const prompt = `
+You are a fashion AI assistant.
+
+Context from knowledge base:
+${relevantKnowledge}
+
+User question: ${userMessage}
+
+Provide helpful fashion advice based on the context.
+`;
+
+// ❌ DON'T: Concatenate without structure
+const prompt = systemPrompt + context + userMessage;
+```
+
+### Error Handling
+
+```typescript
+// ✅ DO: Handle API errors gracefully
+try {
+  const result = await model.generateContent(prompt);
+  return result.response.text();
+} catch (error) {
+  if (error.status === 429) {
+    logger.warn("Rate limit hit");
+    throw new Error("AI service is busy, please try again");
+  }
+  logger.error("Gemini API error:", error);
+  throw new Error("Failed to generate AI response");
+}
+```
+
+### Token Management
+
+```typescript
+// ✅ DO: Monitor token usage
+const countTokens = async (text: string): Promise<number> => {
+  const result = await model.countTokens(text);
+  return result.totalTokens;
+};
+
+// Truncate context if too large
+if (tokens > 30000) {
+  context = context.substring(0, 20000);
+}
+```
+
+## Pinecone Vector Database
+
+### Vectorization
+
+```typescript
+// ✅ DO: Use consistent embedding model
+const vectorizeText = async (text: string): Promise<number[]> => {
+  const model = getEmbeddingModel();
+  const result = await model.embedContent(text);
+  return result.embedding.values;
+};
+
+// ✅ DO: Normalize and chunk large texts
+const chunkText = (text: string, maxLength: number = 1000): string[] => {
+  const sentences = text.split(". ");
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (const sentence of sentences) {
+    if ((currentChunk + sentence).length > maxLength) {
+      chunks.push(currentChunk);
+      currentChunk = sentence;
+    } else {
+      currentChunk += (currentChunk ? ". " : "") + sentence;
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk);
+  return chunks;
+};
+```
+
+### Upsert Best Practices
+
+```typescript
+// ✅ DO: Batch upserts for performance
+const upsertKnowledge = async (items: KnowledgeItem[]): Promise<void> => {
+  const index = getPineconeIndex();
+  const vectors = [];
+
+  for (const item of items) {
+    const vector = await vectorizeText(item.content);
+    vectors.push({
+      id: item.id,
+      values: vector,
+      metadata: {
+        content: item.content,
+        userId: item.userId,
+        createdAt: item.createdAt,
+      },
+    });
+  }
+
+  // Batch upsert (max 100 per request)
+  const batchSize = 100;
+  for (let i = 0; i < vectors.length; i += batchSize) {
+    const batch = vectors.slice(i, i + batchSize);
+    await index.upsert(batch);
+  }
+};
+```
+
+### Query Optimization
+
+```typescript
+// ✅ DO: Use filters to narrow search
+const searchResults = await index.query({
+  vector: queryVector,
+  topK: 5,
+  filter: {
+    userId: { $eq: userId },
+    createdAt: { $gte: thirtyDaysAgo },
+  },
+  includeMetadata: true,
+});
+
+// ✅ DO: Handle no results gracefully
+if (searchResults.matches.length === 0) {
+  logger.info("No relevant knowledge found");
+  return [];
+}
+
+// ✅ DO: Filter by score threshold
+const relevantResults = searchResults.matches.filter(
+  (match) => match.score > 0.7 // Only high similarity
+);
+```
+
+## RAG (Retrieval Augmented Generation) Pattern
+
+### Implementation
+
+```typescript
+// Complete RAG flow
+export const chatWithRAG = async (
+  userMessage: string,
+  userId: string
+): Promise<string> => {
+  // 1. Vectorize user query
+  const queryVector = await vectorizeText(userMessage);
+
+  // 2. Search relevant knowledge
+  const knowledge = await searchKnowledge(queryVector, userId, 5);
+
+  // 3. Build context from top results
+  const context = knowledge.map((k) => k.metadata.content).join("\n\n");
+
+  // 4. Generate AI response with context
+  const response = await generateResponse(
+    userMessage,
+    context,
+    "You are a helpful fashion assistant."
+  );
+
+  return response;
+};
+```
+
+### Context Window Management
+
+```typescript
+// ✅ DO: Manage context size
+const MAX_CONTEXT_TOKENS = 30000;
+
+const buildContext = async (
+  knowledge: SearchResult[],
+  maxTokens: number = MAX_CONTEXT_TOKENS
+): Promise<string> => {
+  let context = "";
+  let tokenCount = 0;
+
+  for (const item of knowledge) {
+    const itemTokens = await countTokens(item.metadata.content);
+
+    if (tokenCount + itemTokens > maxTokens) {
+      break; // Stop adding context
+    }
+
+    context += item.metadata.content + "\n\n";
+    tokenCount += itemTokens;
+  }
+
+  return context;
+};
+```
+
+## Performance Optimization
+
+### Caching
+
+```typescript
+// ✅ DO: Cache embeddings
+const embeddingCache = new Map<string, number[]>();
+
+export const getCachedEmbedding = async (text: string): Promise<number[]> => {
+  const cacheKey = hashString(text);
+
+  if (embeddingCache.has(cacheKey)) {
+    return embeddingCache.get(cacheKey)!;
+  }
+
+  const embedding = await vectorizeText(text);
+  embeddingCache.set(cacheKey, embedding);
+
+  return embedding;
+};
+```
+
+### Async Processing
+
+```typescript
+// ✅ DO: Process heavy operations in background
+import Queue from "bull";
+
+const vectorizationQueue = new Queue("vectorization");
+
+export const queueKnowledgeForIndexing = async (
+  knowledgeId: string
+): Promise<void> => {
+  await vectorizationQueue.add({
+    knowledgeId,
+    timestamp: Date.now(),
+  });
+};
+
+// Worker processes the queue
+vectorizationQueue.process(async (job) => {
+  const { knowledgeId } = job.data;
+  const knowledge = await getKnowledgeById(knowledgeId);
+  await vectorizeAndStore(knowledge);
+});
+```
+
+## Security Considerations
+
+### Input Sanitization
+
+```typescript
+// ✅ DO: Sanitize user input before sending to AI
+const sanitizeInput = (input: string): string => {
+  // Remove potential prompt injection attempts
+  return input
+    .replace(/system:|assistant:|user:/gi, "")
+    .trim()
+    .substring(0, 10000); // Limit length
+};
+```
+
+### Metadata Security
+
+```typescript
+// ✅ DO: Never expose sensitive data in metadata
+const safeMetadata = {
+  content: item.content,
+  userId: item.userId,
+  // ❌ DON'T include: email, API keys, passwords, etc.
+};
+```
+
+## Monitoring & Logging
+
+### Track AI Operations
+
+```typescript
+// ✅ DO: Log AI operations for debugging
+logger.info("AI generation started", {
+  userId,
+  messageLength: userMessage.length,
+  contextSize: context.length,
+});
+
+const startTime = Date.now();
+const response = await generateResponse(userMessage, context, systemPrompt);
+const duration = Date.now() - startTime;
+
+logger.info("AI generation completed", {
+  duration,
+  responseLength: response.length,
+  tokensUsed: await countTokens(response),
+});
+```
+
+### Error Tracking
+
+```typescript
+// ✅ DO: Track AI errors separately
+try {
+  return await aiOperation();
+} catch (error) {
+  logger.error("AI operation failed", {
+    errorType: error.name,
+    errorMessage: error.message,
+    operation: "generateResponse",
+    userId,
+  });
+  throw error;
+}
+```
+
+## Cost Optimization
+
+### Reduce API Calls
+
+```typescript
+// ✅ DO: Batch operations where possible
+// ✅ DO: Cache frequently requested data
+// ✅ DO: Use lower topK values when appropriate
+// ✅ DO: Implement rate limiting on expensive endpoints
+
+// ❌ DON'T: Generate embeddings for every small change
+// ❌ DON'T: Query AI for simple lookups
+// ❌ DON'T: Store redundant vectors
+```
+
+## Testing AI Integrations
+
+### Mock AI Responses
+
+```typescript
+// tests/helpers/mocks.ts
+export const mockGeminiResponse = (text: string) => {
+  return {
+    response: {
+      text: () => text,
+      candidates: [{ content: { parts: [{ text }] } }],
+    },
+  };
+};
+
+// In tests
+jest.mock("@/config/ai", () => ({
+  getGeminiModel: () => ({
+    generateContent: jest
+      .fn()
+      .mockResolvedValue(mockGeminiResponse("Mocked AI response")),
+  }),
+}));
+```
+
+### Test Vector Search
+
+```typescript
+describe("Knowledge Search", () => {
+  it("should return relevant results", async () => {
+    const results = await searchKnowledge("fashion advice", userId, 5);
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].score).toBeGreaterThan(0.5);
+    expect(results[0].metadata).toHaveProperty("content");
+  });
+});
+```
