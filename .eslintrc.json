@@ -4,10 +4,7 @@
     "es2021": true,
     "jest": true
   },
-  "extends": [
-    "eslint:recommended",
-    "plugin:@typescript-eslint/recommended"
-  ],
+  "extends": ["eslint:recommended", "plugin:@typescript-eslint/recommended"],
   "parser": "@typescript-eslint/parser",
   "parserOptions": {
     "ecmaVersion": "latest",
@@ -30,6 +27,5 @@
     "prefer-const": "error",
     "no-var": "error"
   },
-  "ignorePatterns": ["dist", "node_modules", "coverage", "*.js"]
+  "ignorePatterns": ["dist", "node_modules", "coverage", "*.js", "**/*.d.ts"]
 }
-
