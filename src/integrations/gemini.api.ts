@@ -4,14 +4,12 @@
  * Handles advanced API operations, error handling, retry logic, and response formatting
  */
 
-import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import logger from "../config/logger";
 import type {
   GeminiConfig,
   ApiResponse,
-  StreamingChunk,
   GenerationOptions,
-  StreamingOptions,
   RAGOptions,
   RAGResponseData,
   HealthCheckData,
@@ -23,10 +21,8 @@ import type {
  * Gemini API integration class
  */
 export class GeminiApiIntegration {
-  private genAI: GoogleGenerativeAI;
+  private genAI: GoogleGenAI;
   private config: GeminiConfig;
-  private generativeModel: GenerativeModel | null = null;
-  private embeddingModel: GenerativeModel | null = null;
 
   constructor(config: Partial<GeminiConfig> = {}) {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -36,7 +32,7 @@ export class GeminiApiIntegration {
 
     this.config = {
       apiKey,
-      defaultModel: "gemini-1.5-flash",
+      defaultModel: "gemini-2.5-flash",
       embeddingModel: "text-embedding-004",
       maxRetries: 3,
       retryDelay: 1000,
@@ -44,36 +40,14 @@ export class GeminiApiIntegration {
       ...config,
     };
 
-    this.genAI = new GoogleGenerativeAI(this.config.apiKey);
+    this.genAI = new GoogleGenAI({
+      apiKey: this.config.apiKey,
+    });
 
     logger.info("Gemini API integration initialized", {
       defaultModel: this.config.defaultModel,
       embeddingModel: this.config.embeddingModel,
     });
-  }
-
-  /**
-   * Get generative model instance with caching
-   */
-  private getGenerativeModel(): GenerativeModel {
-    if (!this.generativeModel) {
-      this.generativeModel = this.genAI.getGenerativeModel({
-        model: this.config.defaultModel,
-      });
-    }
-    return this.generativeModel;
-  }
-
-  /**
-   * Get embedding model instance with caching
-   */
-  private getEmbeddingModel(): GenerativeModel {
-    if (!this.embeddingModel) {
-      this.embeddingModel = this.genAI.getGenerativeModel({
-        model: this.config.embeddingModel,
-      });
-    }
-    return this.embeddingModel;
   }
 
   /**
@@ -170,25 +144,15 @@ export class GeminiApiIntegration {
    */
   async generateContent(
     prompt: string,
-    options: GenerationOptions = {}
+    _options: GenerationOptions = {}
   ): Promise<ApiResponse<string>> {
     return this.executeWithRetry(async () => {
-      const model = this.getGenerativeModel();
-
-      const generationConfig = {
-        temperature: options.temperature ?? 0.7,
-        maxOutputTokens: options.maxOutputTokens ?? 2048,
-        topK: options.topK ?? 40,
-        topP: options.topP ?? 0.95,
-      };
-
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig,
+      const result = await this.genAI.models.generateContent({
+        model: this.config.defaultModel,
+        contents: prompt,
       });
 
-      const response = result.response;
-      const text = response.text();
+      const text = result.text;
 
       if (!text || text.trim().length === 0) {
         throw new Error("Empty response from Gemini API");
@@ -199,78 +163,6 @@ export class GeminiApiIntegration {
   }
 
   /**
-   * Generate streaming content
-   */
-  async *generateStreamingContent(
-    prompt: string,
-    options: StreamingOptions = {}
-  ): AsyncGenerator<StreamingChunk> {
-    try {
-      const model = this.getGenerativeModel();
-
-      const generationConfig = {
-        temperature: options.temperature ?? 0.7,
-        maxOutputTokens: options.maxOutputTokens ?? 2048,
-      };
-
-      logger.info("Starting streaming generation", {
-        promptLength: prompt.length,
-        config: generationConfig,
-      });
-
-      const result = await model.generateContentStream({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig,
-      });
-
-      let totalText = "";
-      let chunkCount = 0;
-
-      for await (const chunk of result.stream) {
-        const text = chunk.text();
-        totalText += text;
-        chunkCount++;
-
-        yield {
-          text,
-          isComplete: false,
-          metadata: {
-            chunkIndex: chunkCount,
-            totalLength: totalText.length,
-          },
-        };
-      }
-
-      // Final chunk
-      yield {
-        text: "",
-        isComplete: true,
-        metadata: {
-          totalChunks: chunkCount,
-          totalLength: totalText.length,
-        },
-      };
-
-      logger.info("Streaming generation completed", {
-        totalChunks: chunkCount,
-        totalLength: totalText.length,
-      });
-    } catch (error) {
-      logger.error("Streaming generation failed", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-
-      yield {
-        text: "",
-        isComplete: true,
-        metadata: {
-          error: error instanceof Error ? error.message : "Unknown error",
-        },
-      };
-    }
-  }
-
-  /**
    * Generate embeddings with batch processing
    */
   async generateEmbeddings(texts: EmbeddingInput): Promise<ApiResponse<EmbeddingOutput>> {
@@ -278,7 +170,6 @@ export class GeminiApiIntegration {
     const isSingle = !Array.isArray(texts);
 
     return this.executeWithRetry(async () => {
-      const model = this.getEmbeddingModel();
       const embeddings: number[][] = [];
 
       // Process in batches to avoid rate limits
@@ -291,8 +182,11 @@ export class GeminiApiIntegration {
             throw new Error("Empty text provided for embedding");
           }
 
-          const result = await model.embedContent(text);
-          return result.embedding.values;
+          const result = await this.genAI.models.embedContent({
+            model: this.config.embeddingModel,
+            contents: text,
+          });
+          return result.embeddings?.[0]?.values || [];
         });
 
         const batchResults = await Promise.all(batchPromises);
@@ -313,9 +207,11 @@ export class GeminiApiIntegration {
    */
   async countTokens(text: string): Promise<ApiResponse<number>> {
     return this.executeWithRetry(async () => {
-      const model = this.getGenerativeModel();
-      const result = await model.countTokens(text);
-      return result.totalTokens;
+      const result = await this.genAI.models.countTokens({
+        model: this.config.defaultModel,
+        contents: text,
+      });
+      return result.totalTokens || 0;
     }, "countTokens");
   }
 
@@ -394,14 +290,6 @@ Please provide a helpful and accurate response based on the context above.`;
    */
   updateConfig(newConfig: Partial<GeminiConfig>): void {
     this.config = { ...this.config, ...newConfig };
-
-    // Reset cached models if model names changed
-    if (newConfig.defaultModel) {
-      this.generativeModel = null;
-    }
-    if (newConfig.embeddingModel) {
-      this.embeddingModel = null;
-    }
 
     logger.info("Gemini API configuration updated", newConfig);
   }
