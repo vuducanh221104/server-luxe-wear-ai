@@ -1,2 +1,0 @@
-// Mock data for tests
-

@@ -113,6 +113,23 @@ export interface TenantContext {
 }
 
 /**
+ * Interface for RPC result from get_user_tenants
+ */
+export interface UserTenantRPCResult {
+  id: string;
+  tenant: {
+    id: string;
+    name: string;
+    plan: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  };
+  role: string;
+  created_at: string;
+}
+
+/**
  * Tenant invitation interface
  */
 export interface TenantInvitation {

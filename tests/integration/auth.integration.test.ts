@@ -1,2 +1,0 @@
-// Auth integration tests
-

@@ -72,20 +72,6 @@ router.post("/reset-password", resetPasswordValidator, authController.resetPassw
 router.get("/me", authMiddleware, authController.getCurrentUser);
 
 /**
- * GET /api/auth/callback
- * Handle Supabase auth callback from URL fragment
- * @access Public
- */
-router.get("/callback", authController.handleAuthCallback);
-
-/**
- * GET /api/auth/callback-fragment
- * Handle Supabase auth callback from URL fragment (#)
- * @access Public
- */
-router.get("/callback-fragment", authController.handleAuthCallbackFragment);
-
-/**
  * POST /api/auth/verify-token
  * Verify access token
  * @access Public

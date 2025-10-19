@@ -35,6 +35,7 @@ export interface AuthResponse {
   session: Session | null; // Supabase Session type (null if email confirmation required)
   accessToken: string;
   refreshToken: string;
+  userTenants?: any[]; // User's tenant memberships
 }
 
 /**

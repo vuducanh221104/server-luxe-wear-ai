@@ -60,7 +60,7 @@ export async function handleAsyncOperation<T>(
     }
 
     if (shouldThrow) {
-      throw new Error(errorMessage);
+      throw error; // Throw original error instead of creating new one
     }
 
     // If not throwing and no fallback, return undefined (for void operations)

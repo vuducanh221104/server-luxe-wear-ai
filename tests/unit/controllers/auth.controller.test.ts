@@ -1,2 +1,0 @@
-// Auth controller unit tests
-

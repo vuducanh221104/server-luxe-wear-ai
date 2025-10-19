@@ -13,6 +13,7 @@ dotenv.config();
 // App configuration
 import createApp from "./app";
 import logger from "./config/logger";
+import { setupGlobalErrorHandlers } from "./utils/unhandledRejectionHandler";
 
 // Background jobs
 import { startJobs, stopJobs } from "./jobs";
@@ -31,6 +32,9 @@ const PORT = 3001;
  * Initialize all services
  */
 const initializeServices = async (): Promise<void> => {
+  // Setup global error handlers first
+  setupGlobalErrorHandlers();
+
   logger.info("Initializing services...");
 
   try {

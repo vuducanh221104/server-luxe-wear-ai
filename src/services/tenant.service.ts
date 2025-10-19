@@ -14,6 +14,7 @@ import {
   TenantStats,
   UserTenantMembership,
   TenantRole,
+  UserTenantRPCResult,
 } from "../types/tenant";
 
 /**
@@ -377,49 +378,64 @@ export class TenantService {
    */
   async getUserTenants(userId: string): Promise<UserTenantMembership[]> {
     try {
-      const { data: userTenants, error } = await supabaseAdmin
-        .from("user_tenants")
-        .select(
-          `
-          id,
-          role,
-          created_at,
-          tenant:tenants (
-            id,
-            name,
-            plan,
-            status,
-            created_at,
-            updated_at
-          )
-        `
-        )
-        .eq("user_id", userId);
+      // Use raw SQL query for better control
+      const { data: userTenants, error } = await supabaseAdmin.rpc("get_user_tenants", {
+        user_id: userId,
+      });
 
       if (error) {
-        throw new Error(`Failed to get user tenants: ${error.message}`);
+        // Fallback to direct query if RPC doesn't exist
+        const { data: fallbackData, error: fallbackError } = await supabaseAdmin
+          .from("user_tenants")
+          .select(
+            `
+            id,
+            role,
+            created_at,
+            tenant_id
+          `
+          )
+          .eq("user_id", userId);
+
+        if (fallbackError) {
+          throw new Error(`Failed to get user tenants: ${fallbackError.message}`);
+        }
+
+        // Get tenant details separately
+        const tenantIds = fallbackData?.map((ut) => ut.tenant_id).filter(Boolean) || [];
+        if (tenantIds.length === 0) {
+          return [];
+        }
+
+        const { data: tenants, error: tenantError } = await supabaseAdmin
+          .from("tenants")
+          .select("*")
+          .in("id", tenantIds);
+
+        if (tenantError) {
+          throw new Error(`Failed to get tenant details: ${tenantError.message}`);
+        }
+
+        // Combine the data
+        return (fallbackData || [])
+          .map((ut) => {
+            const tenant = tenants?.find((t) => t.id === ut.tenant_id);
+            return {
+              id: ut.id,
+              tenant: tenant || null,
+              role: ut.role as TenantRole,
+              joinedAt: ut.created_at,
+            };
+          })
+          .filter((ut) => ut.tenant !== null);
       }
 
-      return (userTenants || []).map(
-        (ut: {
-          id: string;
-          role: string;
-          created_at: string;
-          tenant: Array<{
-            id: string;
-            name: string;
-            plan: string;
-            status: string;
-            created_at: string;
-            updated_at: string;
-          }>;
-        }) => ({
-          id: ut.id,
-          tenant: ut.tenant[0], // tenant is an array from the join
-          role: ut.role as TenantRole,
-          joinedAt: ut.created_at,
-        })
-      );
+      return (userTenants || []).map((ut: UserTenantRPCResult) => ({
+        id: ut.id,
+        tenant: ut.tenant,
+        role: ut.role as TenantRole,
+        joinedAt: ut.created_at,
+      }));
     } catch (error) {
       logger.error("Get user tenants service error", {
         error: error instanceof Error ? error.message : "Unknown error",
