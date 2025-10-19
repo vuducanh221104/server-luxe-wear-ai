@@ -2,6 +2,7 @@
  * @file gemini.api.ts
  * @description Google Gemini API integration layer
  * Handles advanced API operations, error handling, retry logic, and response formatting
+ * Updated for multi-tenancy support with tenant-aware logging
  */
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -16,6 +17,7 @@ import type {
   EmbeddingInput,
   EmbeddingOutput,
 } from "../types/gemini";
+import type { TenantContext } from "../types/tenant";
 
 /**
  * Gemini API integration class
@@ -64,7 +66,8 @@ export class GeminiApiIntegration {
    */
   private async executeWithRetry<T>(
     operation: () => Promise<T>,
-    operationName: string
+    operationName: string,
+    tenantContext?: TenantContext
   ): Promise<ApiResponse<T>> {
     const startTime = Date.now();
     let lastError: Error | null = null;
@@ -72,7 +75,10 @@ export class GeminiApiIntegration {
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       try {
-        logger.debug(`Executing ${operationName}`, { attempt: attempt + 1 });
+        logger.debug(`Executing ${operationName}`, {
+          attempt: attempt + 1,
+          tenantId: tenantContext?.id,
+        });
 
         const result = await Promise.race([
           operation(),
@@ -86,6 +92,7 @@ export class GeminiApiIntegration {
         logger.info(`${operationName} completed successfully`, {
           duration,
           retries: attempt,
+          tenantId: tenantContext?.id,
         });
 
         return {
@@ -102,6 +109,7 @@ export class GeminiApiIntegration {
           attempt: attempt + 1,
           error: lastError.message,
           willRetry: attempt < this.config.maxRetries,
+          tenantId: tenantContext?.id,
         });
 
         // Don't retry on certain errors
@@ -119,6 +127,7 @@ export class GeminiApiIntegration {
             logger.warn(`Quota error detected, waiting ${delay}ms before retry`, {
               attempt: attempt + 1,
               error: lastError.message,
+              tenantId: tenantContext?.id,
             });
           }
 
@@ -133,6 +142,7 @@ export class GeminiApiIntegration {
       duration,
       retries,
       error: lastError?.message,
+      tenantId: tenantContext?.id,
     });
 
     return {
@@ -207,83 +217,99 @@ export class GeminiApiIntegration {
    */
   async generateContent(
     prompt: string,
-    options: GenerationOptions = {}
+    options: GenerationOptions = {},
+    tenantContext?: TenantContext
   ): Promise<ApiResponse<string>> {
-    return this.executeWithRetry(async () => {
-      const model = options.model || this.selectModel(options.useCase);
+    return this.executeWithRetry(
+      async () => {
+        const model = options.model || this.selectModel(options.useCase);
 
-      // Get the model instance
-      const modelInstance = this.genAI.getGenerativeModel({
-        model: model,
-        generationConfig: {
-          temperature: options.temperature || 0.7,
-          maxOutputTokens: options.maxOutputTokens || 8192,
-          topK: options.topK || 40,
-          topP: options.topP || 0.95,
-        },
-      });
+        // Get the model instance
+        const modelInstance = this.genAI.getGenerativeModel({
+          model: model,
+          generationConfig: {
+            temperature: options.temperature || 0.7,
+            maxOutputTokens: options.maxOutputTokens || 8192,
+            topK: options.topK || 40,
+            topP: options.topP || 0.95,
+          },
+        });
 
-      // Generate content
-      const result = await modelInstance.generateContent(prompt);
-      const text = result.response.text();
+        // Generate content
+        const result = await modelInstance.generateContent(prompt);
+        const text = result.response.text();
 
-      if (!text || text.trim().length === 0) {
-        throw new Error("Empty response from Gemini API");
-      }
+        if (!text || text.trim().length === 0) {
+          throw new Error("Empty response from Gemini API");
+        }
 
-      return text;
-    }, "generateContent");
+        return text;
+      },
+      "generateContent",
+      tenantContext
+    );
   }
 
   /**
    * Generate embeddings with batch processing
    */
-  async generateEmbeddings(texts: EmbeddingInput): Promise<ApiResponse<EmbeddingOutput>> {
+  async generateEmbeddings(
+    texts: EmbeddingInput,
+    tenantContext?: TenantContext
+  ): Promise<ApiResponse<EmbeddingOutput>> {
     const textArray = Array.isArray(texts) ? texts : [texts];
     const isSingle = !Array.isArray(texts);
 
-    return this.executeWithRetry(async () => {
-      const embeddings: number[][] = [];
+    return this.executeWithRetry(
+      async () => {
+        const embeddings: number[][] = [];
 
-      // Process in batches to avoid rate limits
-      const batchSize = 5; // Reduced batch size for quota management
-      for (let i = 0; i < textArray.length; i += batchSize) {
-        const batch = textArray.slice(i, i + batchSize);
+        // Process in batches to avoid rate limits
+        const batchSize = 5; // Reduced batch size for quota management
+        for (let i = 0; i < textArray.length; i += batchSize) {
+          const batch = textArray.slice(i, i + batchSize);
 
-        // Sequential processing within each batch to avoid quota issues
-        for (const text of batch) {
-          if (!text || text.trim().length === 0) {
-            throw new Error("Empty text provided for embedding");
+          // Sequential processing within each batch to avoid quota issues
+          for (const text of batch) {
+            if (!text || text.trim().length === 0) {
+              throw new Error("Empty text provided for embedding");
+            }
+
+            const model = this.genAI.getGenerativeModel({ model: this.config.embeddingModel });
+            const result = await model.embedContent(text);
+            const embedding = result.embedding?.values || [];
+            embeddings.push(embedding);
+
+            // Small delay between requests to respect rate limits
+            await new Promise((resolve) => setTimeout(resolve, 200));
           }
 
-          const model = this.genAI.getGenerativeModel({ model: this.config.embeddingModel });
-          const result = await model.embedContent(text);
-          const embedding = result.embedding?.values || [];
-          embeddings.push(embedding);
-
-          // Small delay between requests to respect rate limits
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          // Longer delay between batches
+          if (i + batchSize < textArray.length) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
         }
 
-        // Longer delay between batches
-        if (i + batchSize < textArray.length) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      }
-
-      return isSingle ? embeddings[0] : embeddings;
-    }, "generateEmbeddings");
+        return isSingle ? embeddings[0] : embeddings;
+      },
+      "generateEmbeddings",
+      tenantContext
+    );
   }
 
   /**
    * Count tokens in text
    */
-  async countTokens(text: string): Promise<ApiResponse<number>> {
-    return this.executeWithRetry(async () => {
-      const model = this.genAI.getGenerativeModel({ model: this.config.defaultModel });
-      const result = await model.countTokens(text);
-      return result.totalTokens || 0;
-    }, "countTokens");
+  async countTokens(text: string, tenantContext?: TenantContext): Promise<ApiResponse<number>> {
+    return this.executeWithRetry(
+      async () => {
+        const model = this.genAI.getGenerativeModel({ model: this.config.defaultModel });
+        const result = await model.countTokens(text);
+        return result.totalTokens || 0;
+      },
+      "countTokens",
+      tenantContext
+    );
   }
 
   /**
@@ -293,11 +319,13 @@ export class GeminiApiIntegration {
     userMessage: string,
     context: string,
     systemPrompt: string = "You are a helpful AI assistant.",
-    options: RAGOptions = {}
+    options: RAGOptions = {},
+    tenantContext?: TenantContext
   ): Promise<ApiResponse<RAGResponseData>> {
-    return this.executeWithRetry(async () => {
-      // Build structured prompt
-      const prompt = `${systemPrompt}
+    return this.executeWithRetry(
+      async () => {
+        // Build structured prompt
+        const prompt = `${systemPrompt}
 
 ${context ? `Context from knowledge base:\n${context}\n` : ""}
 
@@ -305,63 +333,74 @@ User question: ${userMessage}
 
 Please provide a helpful and accurate response based on the context above.`;
 
-      // Parallel: Generate response and count tokens (if metadata needed)
-      const [responseResult, tokenCounts] = await Promise.all([
-        this.generateContent(prompt, {
-          temperature: options.temperature,
-          useCase: "rag", // Use RAG-optimized model
-        }),
-        options.includeMetadata
-          ? Promise.all([
-              this.countTokens(prompt),
-              this.countTokens(userMessage), // Count user message instead of response for better performance
-            ])
-          : Promise.resolve([
-              { success: true, data: 0 },
-              { success: true, data: 0 },
-            ]),
-      ]);
+        // Parallel: Generate response and count tokens (if metadata needed)
+        const [responseResult, tokenCounts] = await Promise.all([
+          this.generateContent(
+            prompt,
+            {
+              temperature: options.temperature,
+              useCase: "rag", // Use RAG-optimized model
+            },
+            tenantContext
+          ),
+          options.includeMetadata
+            ? Promise.all([
+                this.countTokens(prompt, tenantContext),
+                this.countTokens(userMessage, tenantContext), // Count user message instead of response for better performance
+              ])
+            : Promise.resolve([
+                { success: true, data: 0 },
+                { success: true, data: 0 },
+              ]),
+        ]);
 
-      if (!responseResult.success || !responseResult.data) {
-        throw new Error(responseResult.error || "Failed to generate response");
-      }
+        if (!responseResult.success || !responseResult.data) {
+          throw new Error(responseResult.error || "Failed to generate response");
+        }
 
-      const responseData: RAGResponseData = {
-        response: responseResult.data,
-      };
-
-      // Add metadata if requested
-      if (options.includeMetadata) {
-        const [promptTokens, userTokens] = tokenCounts;
-        responseData.metadata = {
-          contextLength: context.length,
-          promptTokens: promptTokens.success ? promptTokens.data || 0 : 0,
-          responseTokens: userTokens.success ? userTokens.data || 0 : 0,
+        const responseData: RAGResponseData = {
+          response: responseResult.data,
         };
-      }
 
-      return responseData;
-    }, "generateRAGResponse");
+        // Add metadata if requested
+        if (options.includeMetadata) {
+          const [promptTokens, userTokens] = tokenCounts;
+          responseData.metadata = {
+            contextLength: context.length,
+            promptTokens: promptTokens.success ? promptTokens.data || 0 : 0,
+            responseTokens: userTokens.success ? userTokens.data || 0 : 0,
+          };
+        }
+
+        return responseData;
+      },
+      "generateRAGResponse",
+      tenantContext
+    );
   }
 
   /**
    * Health check for Gemini API
    */
-  async healthCheck(): Promise<ApiResponse<HealthCheckData>> {
-    return this.executeWithRetry(async () => {
-      const testPrompt = "Hello";
-      const result = await this.generateContent(testPrompt, { useCase: "simple" });
+  async healthCheck(tenantContext?: TenantContext): Promise<ApiResponse<HealthCheckData>> {
+    return this.executeWithRetry(
+      async () => {
+        const testPrompt = "Hello";
+        const result = await this.generateContent(testPrompt, { useCase: "simple" }, tenantContext);
 
-      if (!result.success) {
-        throw new Error(result.error || "Health check failed");
-      }
+        if (!result.success) {
+          throw new Error(result.error || "Health check failed");
+        }
 
-      return {
-        status: "healthy",
-        model: this.config.defaultModel,
-        timestamp: new Date().toISOString(),
-      };
-    }, "healthCheck");
+        return {
+          status: "healthy",
+          model: this.config.defaultModel,
+          timestamp: new Date().toISOString(),
+        };
+      },
+      "healthCheck",
+      tenantContext
+    );
   }
 
   /**

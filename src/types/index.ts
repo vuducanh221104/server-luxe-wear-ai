@@ -23,3 +23,9 @@ export * from "./agent";
 
 // AI Service types
 export * from "./ai";
+
+// Tenant types
+export * from "./tenant";
+
+// Knowledge types
+export * from "./knowledge";

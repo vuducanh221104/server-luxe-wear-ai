@@ -1,9 +1,10 @@
 /**
  * @file webhook.api.ts
  * @description Webhook API integration for handling external service callbacks
+ * Updated for multi-tenancy support
  */
 
-import crypto from "crypto";
+import * as crypto from "crypto";
 import logger from "../config/logger";
 import type {
   WebhookProvider,
@@ -13,12 +14,14 @@ import type {
   WebhookStats,
   WebhookHealthCheck,
 } from "../types/webhook";
+import type { TenantContext } from "../types/tenant";
 
 export class WebhookApiIntegration {
   private handlers: Map<string, WebhookHandler> = new Map();
+  private tenantHandlers: Map<string, Map<string, WebhookHandler>> = new Map();
 
   constructor() {
-    logger.info("Webhook API integration initialized");
+    logger.info("Webhook API integration initialized with multi-tenancy support");
   }
 
   registerHandler(provider: WebhookProvider, eventType: string, handler: WebhookHandler): void {
@@ -27,10 +30,35 @@ export class WebhookApiIntegration {
     logger.info("Webhook handler registered", { provider, eventType });
   }
 
+  /**
+   * Register tenant-specific webhook handler
+   */
+  registerTenantHandler(
+    tenantId: string,
+    provider: WebhookProvider,
+    eventType: string,
+    handler: WebhookHandler
+  ): void {
+    if (!this.tenantHandlers.has(tenantId)) {
+      this.tenantHandlers.set(tenantId, new Map());
+    }
+
+    const tenantHandlerMap = this.tenantHandlers.get(tenantId)!;
+    const key = `${provider}:${eventType}`;
+    tenantHandlerMap.set(key, handler);
+
+    logger.info("Tenant webhook handler registered", {
+      tenantId,
+      provider,
+      eventType,
+    });
+  }
+
   async processWebhook(
     provider: WebhookProvider,
     payload: string,
-    headers: Record<string, string>
+    headers: Record<string, string>,
+    tenantContext?: TenantContext
   ): Promise<WebhookResult> {
     const startTime = Date.now();
     const eventId = crypto.randomUUID();
@@ -46,20 +74,42 @@ export class WebhookApiIntegration {
         timestamp: new Date(),
         data,
         headers,
+        tenantId: tenantContext?.id,
       };
 
-      // Find and execute handler (specific first, then wildcard)
-      const specificHandler = this.handlers.get(`${provider}:${eventType}`);
-      const wildcardHandler = this.handlers.get(`${provider}:*`);
-      const handler = specificHandler || wildcardHandler;
+      // Find and execute handler (tenant-specific first, then global)
+      let handler: WebhookHandler | undefined;
+
+      if (tenantContext?.id) {
+        // Try tenant-specific handlers first
+        const tenantHandlerMap = this.tenantHandlers.get(tenantContext.id);
+        if (tenantHandlerMap) {
+          handler =
+            tenantHandlerMap.get(`${provider}:${eventType}`) ||
+            tenantHandlerMap.get(`${provider}:*`);
+        }
+      }
+
+      // Fallback to global handlers
+      if (!handler) {
+        handler =
+          this.handlers.get(`${provider}:${eventType}`) || this.handlers.get(`${provider}:*`);
+      }
 
       if (handler) {
         await handler(event);
+        logger.info("Webhook event processed successfully", {
+          eventId,
+          provider,
+          eventType,
+          tenantId: tenantContext?.id,
+        });
       } else {
         logger.warn("No handler found for webhook event", {
           eventId,
           provider,
           eventType,
+          tenantId: tenantContext?.id,
         });
       }
 
@@ -68,14 +118,23 @@ export class WebhookApiIntegration {
         eventId,
         provider,
         type: eventType,
+        tenantId: tenantContext?.id,
         processingTime: Date.now() - startTime,
       };
     } catch (error) {
+      logger.error("Webhook processing failed", {
+        eventId,
+        provider,
+        tenantId: tenantContext?.id,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
       return {
         success: false,
         eventId,
         provider,
         type: "unknown",
+        tenantId: tenantContext?.id,
         error: error instanceof Error ? error.message : "Unknown error",
         processingTime: Date.now() - startTime,
       };
@@ -104,33 +163,61 @@ export class WebhookApiIntegration {
   /**
    * Get webhook handler statistics
    */
-  getHandlerStats(): WebhookStats {
+  getHandlerStats(tenantId?: string): WebhookStats {
     const handlersByProvider: Record<string, number> = {};
     const registeredProviders = new Set<WebhookProvider>();
+    let totalHandlers = 0;
 
-    for (const [key] of this.handlers) {
-      const [provider] = key.split(":");
-      handlersByProvider[provider] = (handlersByProvider[provider] || 0) + 1;
-      registeredProviders.add(provider as WebhookProvider);
+    if (tenantId && this.tenantHandlers.has(tenantId)) {
+      // Get tenant-specific stats
+      const tenantHandlerMap = this.tenantHandlers.get(tenantId)!;
+      totalHandlers = tenantHandlerMap.size;
+
+      for (const [key] of tenantHandlerMap) {
+        const [provider] = key.split(":");
+        handlersByProvider[provider] = (handlersByProvider[provider] || 0) + 1;
+        registeredProviders.add(provider as WebhookProvider);
+      }
+    } else {
+      // Get global stats
+      totalHandlers = this.handlers.size;
+
+      for (const [key] of this.handlers) {
+        const [provider] = key.split(":");
+        handlersByProvider[provider] = (handlersByProvider[provider] || 0) + 1;
+        registeredProviders.add(provider as WebhookProvider);
+      }
+
+      // Add tenant-specific handlers to total
+      for (const tenantHandlerMap of this.tenantHandlers.values()) {
+        totalHandlers += tenantHandlerMap.size;
+        for (const [key] of tenantHandlerMap) {
+          const [provider] = key.split(":");
+          handlersByProvider[provider] = (handlersByProvider[provider] || 0) + 1;
+          registeredProviders.add(provider as WebhookProvider);
+        }
+      }
     }
 
     return {
-      totalHandlers: this.handlers.size,
+      totalHandlers,
       handlersByProvider,
       registeredProviders: Array.from(registeredProviders),
+      tenantId,
     };
   }
 
   /**
    * Health check for webhook integration
    */
-  healthCheck(): WebhookHealthCheck {
-    const stats = this.getHandlerStats();
+  healthCheck(tenantId?: string): WebhookHealthCheck {
+    const stats = this.getHandlerStats(tenantId);
 
     return {
       status: "healthy",
       configuredProviders: stats.registeredProviders || [],
       totalHandlers: stats.totalHandlers || 0,
+      tenantId,
       timestamp: new Date().toISOString(),
     };
   }
@@ -149,6 +236,29 @@ export class WebhookApiIntegration {
   }
 
   /**
+   * Register tenant-specific wildcard handler for all events from a provider
+   */
+  registerTenantProviderHandler(
+    tenantId: string,
+    provider: WebhookProvider,
+    handler: WebhookHandler
+  ): void {
+    if (!this.tenantHandlers.has(tenantId)) {
+      this.tenantHandlers.set(tenantId, new Map());
+    }
+
+    const tenantHandlerMap = this.tenantHandlers.get(tenantId)!;
+    const key = `${provider}:*`;
+    tenantHandlerMap.set(key, handler);
+
+    logger.info("Tenant webhook provider handler registered", {
+      tenantId,
+      provider,
+      key,
+    });
+  }
+
+  /**
    * Remove handler
    */
   removeHandler(provider: WebhookProvider, eventType: string): boolean {
@@ -157,6 +267,49 @@ export class WebhookApiIntegration {
 
     if (removed) {
       logger.info("Webhook handler removed", { provider, eventType });
+    }
+
+    return removed;
+  }
+
+  /**
+   * Remove tenant-specific handler
+   */
+  removeTenantHandler(tenantId: string, provider: WebhookProvider, eventType: string): boolean {
+    const tenantHandlerMap = this.tenantHandlers.get(tenantId);
+    if (!tenantHandlerMap) {
+      return false;
+    }
+
+    const key = `${provider}:${eventType}`;
+    const removed = tenantHandlerMap.delete(key);
+
+    if (removed) {
+      logger.info("Tenant webhook handler removed", {
+        tenantId,
+        provider,
+        eventType,
+      });
+    }
+
+    return removed;
+  }
+
+  /**
+   * Get all registered tenants
+   */
+  getRegisteredTenants(): string[] {
+    return Array.from(this.tenantHandlers.keys());
+  }
+
+  /**
+   * Clear all handlers for a tenant
+   */
+  clearTenantHandlers(tenantId: string): boolean {
+    const removed = this.tenantHandlers.delete(tenantId);
+
+    if (removed) {
+      logger.info("All tenant webhook handlers cleared", { tenantId });
     }
 
     return removed;

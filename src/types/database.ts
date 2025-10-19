@@ -1,9 +1,3 @@
-/**
- * @file database.ts
- * @description TypeScript types generated from Supabase database schema
- * Auto-generated - DO NOT EDIT MANUALLY
- */
-
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type Database = {
@@ -16,42 +10,53 @@ export type Database = {
     Tables: {
       agents: {
         Row: {
+          allowed_origins: string[] | null;
+          api_key: string | null;
           config: Json | null;
           created_at: string | null;
           description: string | null;
           id: string;
+          is_public: boolean | null;
           name: string;
           owner_id: string | null;
+          tenant_id: string | null;
           updated_at: string | null;
-          api_key: string | null;
-          is_public: boolean | null;
-          allowed_origins: string[] | null;
         };
         Insert: {
+          allowed_origins?: string[] | null;
+          api_key?: string | null;
           config?: Json | null;
           created_at?: string | null;
           description?: string | null;
           id?: string;
+          is_public?: boolean | null;
           name: string;
           owner_id?: string | null;
+          tenant_id?: string | null;
           updated_at?: string | null;
-          api_key?: string | null;
-          is_public?: boolean | null;
-          allowed_origins?: string[] | null;
         };
         Update: {
+          allowed_origins?: string[] | null;
+          api_key?: string | null;
           config?: Json | null;
           created_at?: string | null;
           description?: string | null;
           id?: string;
+          is_public?: boolean | null;
           name?: string;
           owner_id?: string | null;
+          tenant_id?: string | null;
           updated_at?: string | null;
-          api_key?: string | null;
-          is_public?: boolean | null;
-          allowed_origins?: string[] | null;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "agents_tenant_id_fkey";
+            columns: ["tenant_id"];
+            isOneToOne: false;
+            referencedRelation: "tenants";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       analytics: {
         Row: {
@@ -60,6 +65,7 @@ export type Database = {
           id: string;
           query: string;
           response: string | null;
+          tenant_id: string | null;
           user_id: string;
           vector_score: number | null;
         };
@@ -69,6 +75,7 @@ export type Database = {
           id?: string;
           query: string;
           response?: string | null;
+          tenant_id?: string | null;
           user_id: string;
           vector_score?: number | null;
         };
@@ -78,6 +85,7 @@ export type Database = {
           id?: string;
           query?: string;
           response?: string | null;
+          tenant_id?: string | null;
           user_id?: string;
           vector_score?: number | null;
         };
@@ -89,6 +97,13 @@ export type Database = {
             referencedRelation: "agents";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "analytics_tenant_id_fkey";
+            columns: ["tenant_id"];
+            isOneToOne: false;
+            referencedRelation: "tenants";
+            referencedColumns: ["id"];
+          },
         ];
       };
       knowledge: {
@@ -98,6 +113,7 @@ export type Database = {
           created_at: string | null;
           id: string;
           metadata: Json | null;
+          tenant_id: string | null;
           title: string;
           updated_at: string | null;
         };
@@ -107,6 +123,7 @@ export type Database = {
           created_at?: string | null;
           id?: string;
           metadata?: Json | null;
+          tenant_id?: string | null;
           title: string;
           updated_at?: string | null;
         };
@@ -116,6 +133,7 @@ export type Database = {
           created_at?: string | null;
           id?: string;
           metadata?: Json | null;
+          tenant_id?: string | null;
           title?: string;
           updated_at?: string | null;
         };
@@ -127,6 +145,72 @@ export type Database = {
             referencedRelation: "agents";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "knowledge_tenant_id_fkey";
+            columns: ["tenant_id"];
+            isOneToOne: false;
+            referencedRelation: "tenants";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      tenants: {
+        Row: {
+          created_at: string | null;
+          id: string;
+          name: string;
+          plan: string | null;
+          status: string | null;
+          updated_at: string | null;
+        };
+        Insert: {
+          created_at?: string | null;
+          id?: string;
+          name: string;
+          plan?: string | null;
+          status?: string | null;
+          updated_at?: string | null;
+        };
+        Update: {
+          created_at?: string | null;
+          id?: string;
+          name?: string;
+          plan?: string | null;
+          status?: string | null;
+          updated_at?: string | null;
+        };
+        Relationships: [];
+      };
+      user_tenants: {
+        Row: {
+          created_at: string | null;
+          id: string;
+          role: string | null;
+          tenant_id: string | null;
+          user_id: string | null;
+        };
+        Insert: {
+          created_at?: string | null;
+          id?: string;
+          role?: string | null;
+          tenant_id?: string | null;
+          user_id?: string | null;
+        };
+        Update: {
+          created_at?: string | null;
+          id?: string;
+          role?: string | null;
+          tenant_id?: string | null;
+          user_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "user_tenants_tenant_id_fkey";
+            columns: ["tenant_id"];
+            isOneToOne: false;
+            referencedRelation: "tenants";
+            referencedColumns: ["id"];
+          },
         ];
       };
       webhooks: {
@@ -136,6 +220,7 @@ export type Database = {
           event_type: string;
           headers: Json | null;
           id: string;
+          tenant_id: string | null;
           updated_at: string | null;
           url: string;
         };
@@ -145,6 +230,7 @@ export type Database = {
           event_type: string;
           headers?: Json | null;
           id?: string;
+          tenant_id?: string | null;
           updated_at?: string | null;
           url: string;
         };
@@ -154,6 +240,7 @@ export type Database = {
           event_type?: string;
           headers?: Json | null;
           id?: string;
+          tenant_id?: string | null;
           updated_at?: string | null;
           url?: string;
         };
@@ -163,6 +250,13 @@ export type Database = {
             columns: ["agent_id"];
             isOneToOne: false;
             referencedRelation: "agents";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "webhooks_tenant_id_fkey";
+            columns: ["tenant_id"];
+            isOneToOne: false;
+            referencedRelation: "tenants";
             referencedColumns: ["id"];
           },
         ];

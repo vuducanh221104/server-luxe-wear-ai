@@ -68,12 +68,18 @@ export const getCachedEmbedding = async (
 export const getCachedSearchResults = async <T>(
   queryVector: number[],
   userId: string | undefined,
+  tenantId: string | undefined,
   topK: number,
-  searchFn: (queryVector: number[], userId?: string, topK?: number) => Promise<T[]>
+  searchFn: (
+    queryVector: number[],
+    userId?: string,
+    tenantId?: string,
+    topK?: number
+  ) => Promise<T[]>
 ): Promise<T[]> => {
   const cacheKey = generateCacheKey(
     "search",
-    `${queryVector.join(",")}:${userId || "all"}:${topK}`
+    `${queryVector.join(",")}:${userId || "all"}:${tenantId || "all"}:${topK}`
   );
 
   if (cache.has(cacheKey)) {
@@ -82,7 +88,7 @@ export const getCachedSearchResults = async <T>(
   }
 
   logger.debug("Search cache miss", { cacheKey });
-  const results = await searchFn(queryVector, userId, topK);
+  const results = await searchFn(queryVector, userId, tenantId, topK);
   cache.set(cacheKey, results, 1800); // 30 minutes TTL for search results
   return results;
 };

@@ -1,11 +1,11 @@
 /**
  * @file agent.controller.ts
  * @description Agent controller for AI agent management
- * Handles HTTP requests for agent-related operations
+ * Handles HTTP requests for agent-related operations with multi-tenancy support
  *
  * Routes are organized as:
- * - User Routes: Agent owners can manage their own agents
- * - Admin Routes: System administrators can manage all agents (TODO)
+ * - User Routes: Agent owners can manage their own agents within their tenant
+ * - Admin Routes: System administrators can manage all agents across tenants
  */
 
 import { Request, Response } from "express";
@@ -19,7 +19,7 @@ import { handleAsyncOperationStrict } from "../utils/errorHandler";
 
 /**
  * Agent Controller Class
- * Object-based controller for agent operations
+ * Object-based controller for agent operations with multi-tenancy support
  */
 export class AgentController {
   // ===========================
@@ -29,7 +29,7 @@ export class AgentController {
   /**
    * Create a new agent
    * POST /api/agents
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async createAgent(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -44,13 +44,21 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { name, description, config } = req.body;
 
-        const agent = await agentService.createAgent(req.user.id, {
-          name,
-          description,
-          config,
-        });
+        const agent = await agentService.createAgent(
+          req.user.id,
+          {
+            name,
+            description,
+            config,
+          },
+          req.tenant.id
+        );
 
         return successResponse(
           res,
@@ -70,6 +78,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentName: req.body?.name,
           ip: req.ip,
         },
@@ -80,7 +89,7 @@ export class AgentController {
   /**
    * Get agent by ID
    * GET /api/agents/:agentId
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async getAgent(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -95,9 +104,13 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { agentId } = req.params;
 
-        const agent = await agentService.getAgentById(agentId, req.user.id);
+        const agent = await agentService.getAgentById(agentId, req.user.id, req.tenant.id);
 
         return successResponse(
           res,
@@ -116,6 +129,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentId: req.params.agentId,
         },
       }
@@ -125,7 +139,7 @@ export class AgentController {
   /**
    * List user's agents
    * GET /api/agents
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async listAgents(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -140,10 +154,14 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const page = parseInt(req.query.page as string) || 1;
         const perPage = parseInt(req.query.perPage as string) || 10;
 
-        const result = await agentService.listUserAgents(req.user.id, page, perPage);
+        const result = await agentService.listUserAgents(req.user.id, req.tenant.id, page, perPage);
 
         return successResponse(
           res,
@@ -170,6 +188,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           page: req.query.page,
           perPage: req.query.perPage,
         },
@@ -180,7 +199,7 @@ export class AgentController {
   /**
    * Update agent
    * PUT /api/agents/:agentId
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async updateAgent(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -195,10 +214,14 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { agentId } = req.params;
         const { name, description, config } = req.body;
 
-        const agent = await agentService.updateAgent(agentId, req.user.id, {
+        const agent = await agentService.updateAgent(agentId, req.user.id, req.tenant.id, {
           name,
           description,
           config,
@@ -221,6 +244,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentId: req.params.agentId,
           updateFields: Object.keys(req.body || {}),
         },
@@ -231,7 +255,7 @@ export class AgentController {
   /**
    * Delete agent
    * DELETE /api/agents/:agentId
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async deleteAgent(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -246,9 +270,13 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { agentId } = req.params;
 
-        await agentService.deleteAgent(agentId, req.user.id);
+        await agentService.deleteAgent(agentId, req.user.id, req.tenant.id);
 
         return successResponse(res, null, "Agent deleted successfully");
       },
@@ -256,6 +284,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentId: req.params.agentId,
         },
       }
@@ -265,7 +294,7 @@ export class AgentController {
   /**
    * Get agent statistics
    * GET /api/agents/:agentId/stats
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async getAgentStats(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -280,9 +309,13 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { agentId } = req.params;
 
-        const stats = await agentService.getAgentStats(agentId, req.user.id);
+        const stats = await agentService.getAgentStats(agentId, req.user.id, req.tenant.id);
 
         return successResponse(res, stats, "Agent statistics retrieved successfully");
       },
@@ -290,6 +323,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentId: req.params.agentId,
         },
       }
@@ -299,7 +333,7 @@ export class AgentController {
   /**
    * Search agents
    * GET /api/agents/search
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async searchAgents(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -314,10 +348,19 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const searchTerm = req.query.q as string;
         const limit = parseInt(req.query.limit as string) || 10;
 
-        const agents = await agentService.searchAgents(req.user.id, searchTerm, limit);
+        const agents = await agentService.searchAgents(
+          req.user.id,
+          req.tenant.id,
+          searchTerm,
+          limit
+        );
 
         return successResponse(
           res,
@@ -339,6 +382,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           searchTerm: req.query.q,
           limit: req.query.limit,
         },
@@ -349,7 +393,7 @@ export class AgentController {
   /**
    * Chat with agent (private - requires authentication)
    * POST /api/agents/:agentId/chat
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async chatWithAgent(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -364,11 +408,15 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { agentId } = req.params;
         const { message, context } = req.body;
 
         // Get agent and verify ownership
-        const agent = await agentService.getAgentById(agentId, req.user.id);
+        const agent = await agentService.getAgentById(agentId, req.user.id, req.tenant.id);
 
         // Get agent configuration
         const agentConfig = agent.config as Record<string, unknown>;
@@ -378,6 +426,7 @@ export class AgentController {
         logger.info("Agent chat request", {
           agentId,
           userId: req.user.id,
+          tenantId: req.tenant.id,
           messageLength: message.length,
           hasContext: !!context,
         });
@@ -389,11 +438,12 @@ export class AgentController {
           systemPrompt
         );
 
-        // Log analytics
+        // Log analytics with tenant context
         try {
           await supabaseAdmin.from("analytics").insert({
             agent_id: agentId,
             user_id: req.user.id,
+            tenant_id: req.tenant.id,
             query: message,
             response: response,
             vector_score: null,
@@ -402,6 +452,7 @@ export class AgentController {
           logger.warn("Failed to log analytics", {
             agentId,
             userId: req.user.id,
+            tenantId: req.tenant.id,
             error: analyticsError instanceof Error ? analyticsError.message : "Unknown error",
           });
         }
@@ -409,6 +460,7 @@ export class AgentController {
         logger.info("Agent chat completed", {
           agentId,
           userId: req.user.id,
+          tenantId: req.tenant.id,
           responseLength: response.length,
         });
 
@@ -430,6 +482,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentId: req.params.agentId,
           messageLength: req.body?.message?.length,
         },
@@ -440,7 +493,7 @@ export class AgentController {
   /**
    * Regenerate agent API key
    * POST /api/agents/:agentId/regenerate-key
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async regenerateAgentApiKey(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -455,9 +508,13 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { agentId } = req.params;
 
-        const agent = await agentService.regenerateApiKey(agentId, req.user.id);
+        const agent = await agentService.regenerateApiKey(agentId, req.user.id, req.tenant.id);
 
         return successResponse(
           res,
@@ -474,6 +531,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentId: req.params.agentId,
         },
       }
@@ -483,7 +541,7 @@ export class AgentController {
   /**
    * Toggle agent public status
    * PATCH /api/agents/:agentId/public
-   * @access User (Agent Owner)
+   * @access User (Agent Owner) + Tenant Context
    */
   async toggleAgentPublic(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -498,10 +556,19 @@ export class AgentController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         const { agentId } = req.params;
         const { isPublic } = req.body;
 
-        const agent = await agentService.toggleAgentPublicStatus(agentId, req.user.id, isPublic);
+        const agent = await agentService.toggleAgentPublicStatus(
+          agentId,
+          req.user.id,
+          req.tenant.id,
+          isPublic
+        );
 
         return successResponse(
           res,
@@ -519,6 +586,7 @@ export class AgentController {
       {
         context: {
           userId: req.user?.id,
+          tenantId: req.tenant?.id,
           agentId: req.params.agentId,
           isPublic: req.body?.isPublic,
         },
@@ -566,6 +634,11 @@ export class AgentController {
             id,
             email,
             user_metadata
+          ),
+          tenant:tenant_id (
+            id,
+            name,
+            plan
           )
         `
           )
@@ -596,6 +669,7 @@ export class AgentController {
               isPublic: agent.is_public,
               hasApiKey: !!agent.api_key,
               owner: agent.owner,
+              tenant: agent.tenant,
               createdAt: agent.created_at,
               updatedAt: agent.updated_at,
             })),
@@ -661,10 +735,16 @@ export class AgentController {
           .select("*", { count: "exact", head: true })
           .gte("created_at", thirtyDaysAgo.toISOString());
 
+        // Get tenant statistics
+        const { count: totalTenants } = await supabaseAdmin
+          .from("tenants")
+          .select("*", { count: "exact", head: true });
+
         logger.info("Admin: System stats retrieved", {
           adminId: req.user?.id,
           totalAgents,
           publicAgents,
+          totalTenants,
         });
 
         return successResponse(
@@ -676,6 +756,7 @@ export class AgentController {
             uniqueUsers,
             totalConversations: totalConversations || 0,
             recentAgents: recentAgents || 0,
+            totalTenants: totalTenants || 0,
             averageAgentsPerUser:
               uniqueUsers > 0 ? Math.round(((totalAgents || 0) / uniqueUsers) * 100) / 100 : 0,
           },
@@ -707,7 +788,7 @@ export class AgentController {
         // Get agent info before deletion (for logging)
         const { data: agent } = await supabaseAdmin
           .from("agents")
-          .select("id, name, owner_id")
+          .select("id, name, owner_id, tenant_id")
           .eq("id", agentId)
           .single();
 
@@ -726,6 +807,7 @@ export class AgentController {
           agentId,
           agentName: agent.name,
           originalOwner: agent.owner_id,
+          tenantId: agent.tenant_id,
           adminId: req.user?.id,
           adminEmail: req.user?.email,
         });
@@ -773,7 +855,16 @@ export class AgentController {
         // Get user's agents with pagination
         const { data: agents, error } = await supabaseAdmin
           .from("agents")
-          .select("*")
+          .select(
+            `
+            *,
+            tenant:tenant_id (
+              id,
+              name,
+              plan
+            )
+          `
+          )
           .eq("owner_id", userId)
           .order("created_at", { ascending: false })
           .range(offset, offset + perPage - 1);
@@ -801,6 +892,7 @@ export class AgentController {
               description: agent.description,
               isPublic: agent.is_public,
               hasApiKey: !!agent.api_key,
+              tenant: agent.tenant,
               createdAt: agent.created_at,
               updatedAt: agent.updated_at,
             })),

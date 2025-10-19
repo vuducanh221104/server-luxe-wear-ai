@@ -11,6 +11,7 @@ import agentRoutes from "./agent.router";
 import knowledgeRoutes from "./knowledge.router";
 import analyticsRoutes from "./analytics.router";
 import publicRoutes from "./public.router";
+import tenantRoutes from "./tenant.router";
 import webhookRoutes from "./webhook.router";
 
 const router = Router();
@@ -25,6 +26,7 @@ router.use("/agents", agentRoutes);
 router.use("/knowledge", knowledgeRoutes);
 router.use("/analytics", analyticsRoutes);
 router.use("/public", publicRoutes);
+router.use("/tenants", tenantRoutes);
 router.use("/webhooks", webhookRoutes);
 
 /**
@@ -51,5 +53,6 @@ export {
   knowledgeRoutes,
   analyticsRoutes,
   publicRoutes,
+  tenantRoutes,
   webhookRoutes,
 };

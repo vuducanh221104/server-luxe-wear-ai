@@ -18,6 +18,7 @@ import {
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { adminMiddleware } from "../middlewares/admin.middleware";
 import { strictRateLimiter } from "../middlewares/rateLimiter.middleware";
+import { tenantMiddleware } from "../middlewares/tenant.middleware";
 
 const router = Router();
 
@@ -28,11 +29,12 @@ const router = Router();
 /**
  * POST /api/agents
  * Create a new agent
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
 router.post(
   "/",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   createAgentValidator,
   agentController.createAgent
@@ -41,32 +43,45 @@ router.post(
 /**
  * GET /api/agents
  * List user's agents with pagination
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
-router.get("/", authMiddleware, paginationValidator, agentController.listAgents);
+router.get("/", authMiddleware, tenantMiddleware, paginationValidator, agentController.listAgents);
 
 /**
  * GET /api/agents/search
  * Search agents by name or description
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
-router.get("/search", authMiddleware, searchValidator, agentController.searchAgents);
+router.get(
+  "/search",
+  authMiddleware,
+  tenantMiddleware,
+  searchValidator,
+  agentController.searchAgents
+);
 
 /**
  * GET /api/agents/:agentId
  * Get agent by ID
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
-router.get("/:agentId", authMiddleware, agentIdValidator, agentController.getAgent);
+router.get(
+  "/:agentId",
+  authMiddleware,
+  tenantMiddleware,
+  agentIdValidator,
+  agentController.getAgent
+);
 
 /**
  * PUT /api/agents/:agentId
  * Update agent
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
 router.put(
   "/:agentId",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   [...agentIdValidator, ...updateAgentValidator],
   agentController.updateAgent
@@ -75,11 +90,12 @@ router.put(
 /**
  * DELETE /api/agents/:agentId
  * Delete agent
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
 router.delete(
   "/:agentId",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   agentIdValidator,
   agentController.deleteAgent
@@ -88,18 +104,25 @@ router.delete(
 /**
  * GET /api/agents/:agentId/stats
  * Get agent statistics
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
-router.get("/:agentId/stats", authMiddleware, agentIdValidator, agentController.getAgentStats);
+router.get(
+  "/:agentId/stats",
+  authMiddleware,
+  tenantMiddleware,
+  agentIdValidator,
+  agentController.getAgentStats
+);
 
 /**
  * POST /api/agents/:agentId/chat
  * Chat with agent
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
 router.post(
   "/:agentId/chat",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   [...agentIdValidator, ...chatValidator],
   agentController.chatWithAgent
@@ -108,11 +131,12 @@ router.post(
 /**
  * POST /api/agents/:agentId/regenerate-key
  * Regenerate agent API key
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
 router.post(
   "/:agentId/regenerate-key",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   agentIdValidator,
   agentController.regenerateAgentApiKey
@@ -121,11 +145,12 @@ router.post(
 /**
  * PATCH /api/agents/:agentId/public
  * Toggle agent public status
- * @access User (Agent Owner)
+ * @access User (Agent Owner) + Tenant Context
  */
 router.patch(
   "/:agentId/public",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   [...agentIdValidator, ...togglePublicValidator],
   agentController.toggleAgentPublic

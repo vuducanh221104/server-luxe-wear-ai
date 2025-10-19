@@ -32,12 +32,14 @@ export interface SearchResult {
  * Search knowledge base using vector similarity
  * @param query - User's search query
  * @param userId - Filter by user ID (optional)
+ * @param tenantId - Filter by tenant ID (optional)
  * @param topK - Number of results to return (default: 5)
  * @returns Array of relevant knowledge entries
  */
 export const searchKnowledge = async (
   query: string,
   userId?: string,
+  tenantId?: string,
   topK: number = 5
 ): Promise<SearchResult[]> => {
   try {
@@ -48,7 +50,13 @@ export const searchKnowledge = async (
     );
 
     // 2. Search using the vector (with caching)
-    return await getCachedSearchResults(queryVector, userId, topK, searchKnowledgeWithVector);
+    return await getCachedSearchResults(
+      queryVector,
+      userId,
+      tenantId,
+      topK,
+      searchKnowledgeWithVector
+    );
   } catch (error) {
     logger.error("Knowledge search failed", {
       error: error instanceof Error ? error.message : "Unknown error",
@@ -61,12 +69,14 @@ export const searchKnowledge = async (
  * Search knowledge base using pre-computed vector
  * @param queryVector - Pre-computed query vector
  * @param userId - Filter by user ID (optional)
+ * @param tenantId - Filter by tenant ID (optional)
  * @param topK - Number of results to return (default: 5)
  * @returns Array of relevant knowledge entries
  */
 export const searchKnowledgeWithVector = async (
   queryVector: number[],
   userId?: string,
+  tenantId?: string,
   topK: number = 5
 ): Promise<SearchResult[]> => {
   try {
@@ -76,9 +86,10 @@ export const searchKnowledgeWithVector = async (
       vector: queryVector,
       topK: Math.min(topK * 2, 20), // Get more results for better filtering
       includeMetadata: true,
-      ...(userId && {
+      ...((userId || tenantId) && {
         filter: {
-          userId: { $eq: userId },
+          ...(userId && { userId: { $eq: userId } }),
+          ...(tenantId && { tenantId: { $eq: tenantId } }),
           // Add recency filter for better results
           createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
         },
@@ -219,16 +230,17 @@ export const chatWithRAG = async (
     const searchResults = await getCachedSearchResults(
       queryVector,
       userId,
+      undefined, // tenantId - not available in this context
       5,
       searchKnowledgeWithVector
     );
 
     // 3. Parallel: Build context and prepare for AI generation
     const [context, contextTokens] = await Promise.all([
-      buildContextOptimized(searchResults, 30000 - messageTokens),
+      buildContextOptimized(searchResults as SearchResult[], 30000 - messageTokens),
       searchResults.length > 0
         ? getCachedTokenCount(
-            searchResults.map((r) => r.metadata.content).join(" "),
+            (searchResults as SearchResult[]).map((r) => r.metadata.content).join(" "),
             defaultAIService.countTokens.bind(defaultAIService)
           )
         : Promise.resolve(0),

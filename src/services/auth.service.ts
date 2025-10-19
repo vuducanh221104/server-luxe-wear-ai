@@ -8,6 +8,7 @@ import { supabase, supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
 import { User } from "@supabase/supabase-js";
 import { RegisterData, LoginCredentials, AuthResponse } from "../types";
+import { tenantService } from "./tenant.service";
 
 /**
  * Register a new user
@@ -45,7 +46,7 @@ export const register = async (data: RegisterData): Promise<AuthResponse> => {
     logger.info("Email confirmation required", {
       email,
       userId: authData.user.id,
-      emailConfirmed: authData.user.email_confirmed_at !== null,
+      emailConfirmedAt: authData.user.email_confirmed_at,
     });
 
     // Return user data without session - frontend should handle email confirmation
@@ -56,6 +57,9 @@ export const register = async (data: RegisterData): Promise<AuthResponse> => {
       refreshToken: "", // Empty until email is confirmed
     };
   }
+
+  // Note: Tenant creation moved to login flow
+  // This ensures tenant is only created when user actually logs in
 
   logger.info("User registered successfully", {
     userId: authData.user.id,
@@ -98,6 +102,33 @@ export const login = async (credentials: LoginCredentials): Promise<AuthResponse
 
   // Optional: Update last login timestamp
   await updateLastLogin(data.user.id);
+
+  // Auto create default tenant for user if they don't have any tenants
+  try {
+    const userTenants = await tenantService.getUserTenants(data.user.id);
+    if (userTenants.length === 0) {
+      const tenant = await tenantService.createTenant(
+        {
+          name: `${data.user.user_metadata?.name || email.split("@")[0]}'s Workspace`,
+          plan: "free",
+          status: "active",
+        },
+        data.user.id
+      );
+
+      logger.info("Default tenant created for user on first login", {
+        userId: data.user.id,
+        tenantId: tenant.id,
+        tenantName: tenant.name,
+      });
+    }
+  } catch (tenantError) {
+    logger.error("Failed to create default tenant on login", {
+      userId: data.user.id,
+      error: tenantError instanceof Error ? tenantError.message : "Unknown error",
+    });
+    // Don't fail login if tenant creation fails
+  }
 
   logger.info("User logged in successfully", {
     userId: data.user.id,

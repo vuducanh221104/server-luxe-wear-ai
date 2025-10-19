@@ -22,6 +22,7 @@ import {
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { adminMiddleware } from "../middlewares/admin.middleware";
 import { strictRateLimiter, rateLimiterMiddleware } from "../middlewares/rateLimiter.middleware";
+import { tenantMiddleware } from "../middlewares/tenant.middleware";
 import {
   uploadSingleFile,
   uploadMultipleFiles,
@@ -39,11 +40,12 @@ const router = Router();
 /**
  * POST /api/knowledge
  * Create a new knowledge entry
- * @access User
+ * @access User + Tenant Context
  */
 router.post(
   "/",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   createKnowledgeEndpointValidator,
   knowledgeController.createKnowledge
@@ -52,25 +54,38 @@ router.post(
 /**
  * GET /api/knowledge
  * Get user's knowledge entries with pagination
- * @access User
+ * @access User + Tenant Context
  */
-router.get("/", authMiddleware, knowledgeListValidator, knowledgeController.getUserKnowledge);
+router.get(
+  "/",
+  authMiddleware,
+  tenantMiddleware,
+  knowledgeListValidator,
+  knowledgeController.getUserKnowledge
+);
 
 /**
  * GET /api/knowledge/:id
  * Get knowledge entry by ID
- * @access User
+ * @access User + Tenant Context
  */
-router.get("/:id", authMiddleware, getKnowledgeByIdValidator, knowledgeController.getKnowledgeById);
+router.get(
+  "/:id",
+  authMiddleware,
+  tenantMiddleware,
+  getKnowledgeByIdValidator,
+  knowledgeController.getKnowledgeById
+);
 
 /**
  * PUT /api/knowledge/:id
  * Update knowledge entry
- * @access User
+ * @access User + Tenant Context
  */
 router.put(
   "/:id",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   updateKnowledgeEndpointValidator,
   knowledgeController.updateKnowledge
@@ -79,11 +94,12 @@ router.put(
 /**
  * DELETE /api/knowledge/:id
  * Delete knowledge entry
- * @access User
+ * @access User + Tenant Context
  */
 router.delete(
   "/:id",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   deleteKnowledgeValidator,
   knowledgeController.deleteKnowledge
@@ -92,11 +108,12 @@ router.delete(
 /**
  * POST /api/knowledge/search
  * Search knowledge base using vector similarity
- * @access User
+ * @access User + Tenant Context
  */
 router.post(
   "/search",
   authMiddleware,
+  tenantMiddleware,
   rateLimiterMiddleware,
   searchKnowledgeEndpointValidator,
   knowledgeController.searchKnowledgeBase
@@ -105,11 +122,12 @@ router.post(
 /**
  * POST /api/knowledge/batch
  * Batch upload knowledge entries
- * @access User
+ * @access User + Tenant Context
  */
 router.post(
   "/batch",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   batchUploadEndpointValidator,
   knowledgeController.batchUploadKnowledge
@@ -118,11 +136,12 @@ router.post(
 /**
  * POST /api/knowledge/upload
  * Upload single file and convert to knowledge
- * @access User
+ * @access User + Tenant Context
  */
 router.post(
   "/upload",
   authMiddleware,
+  tenantMiddleware,
   strictRateLimiter,
   uploadSingleFile,
   handleUploadError,

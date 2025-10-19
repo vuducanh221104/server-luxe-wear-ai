@@ -253,29 +253,36 @@ export const banUser = async (userId: string, banned: boolean = true): Promise<U
 /**
  * Get user's agents count
  * @param userId - User ID
+ * @param tenantId - Tenant ID for multi-tenancy
  * @returns Number of agents owned by user
  */
-export const getUserAgentsCount = async (userId: string): Promise<number> => {
+export const getUserAgentsCount = async (userId: string, tenantId?: string): Promise<number> => {
   return handleAsyncOperationWithFallback(
     async () => {
-      logger.info("Getting user agents count", { userId });
+      logger.info("Getting user agents count", { userId, tenantId });
 
-      const { count, error } = await supabaseAdmin
+      let query = supabaseAdmin
         .from("agents")
         .select("*", { count: "exact", head: true })
         .eq("owner_id", userId);
+
+      if (tenantId) {
+        query = query.eq("tenant_id", tenantId);
+      }
+
+      const { count, error } = await query;
 
       if (error) {
         throw new Error(error.message);
       }
 
-      logger.info("User agents count retrieved", { userId, count });
+      logger.info("User agents count retrieved", { userId, tenantId, count });
       return count || 0;
     },
     "get user agents count",
     0, // Fallback to 0 if fails
     {
-      context: { userId },
+      context: { userId, tenantId },
     }
   );
 };
@@ -283,34 +290,47 @@ export const getUserAgentsCount = async (userId: string): Promise<number> => {
 /**
  * Get user statistics
  * @param userId - User ID
+ * @param tenantId - Tenant ID for multi-tenancy
  * @returns User statistics
  */
-export const getUserStats = async (userId: string): Promise<UserStats> => {
+export const getUserStats = async (userId: string, tenantId?: string): Promise<UserStats> => {
   return handleAsyncOperationStrict(
     async () => {
-      logger.info("Getting user statistics", { userId });
+      logger.info("Getting user statistics", { userId, tenantId });
 
       // Get user profile
       const user = await getUserProfile(userId);
 
       // Get agents count
-      const agentsCount = await getUserAgentsCount(userId);
+      const agentsCount = await getUserAgentsCount(userId, tenantId);
 
       // Get total queries count from analytics
-      const { data: userAgents } = await supabaseAdmin
-        .from("agents")
-        .select("id")
-        .eq("owner_id", userId);
+      let agentsQuery = supabaseAdmin.from("agents").select("id").eq("owner_id", userId);
 
+      if (tenantId) {
+        agentsQuery = agentsQuery.eq("tenant_id", tenantId);
+      }
+
+      const { data: userAgents } = await agentsQuery;
       const agentIds = userAgents?.map((agent) => agent.id) || [];
 
-      const { count: totalQueries, error: analyticsError } = await supabaseAdmin
+      let analyticsQuery = supabaseAdmin
         .from("analytics")
         .select("*", { count: "exact", head: true })
         .in("agent_id", agentIds);
 
+      if (tenantId) {
+        analyticsQuery = analyticsQuery.eq("tenant_id", tenantId);
+      }
+
+      const { count: totalQueries, error: analyticsError } = await analyticsQuery;
+
       if (analyticsError) {
-        logger.warn("Failed to get analytics count", { userId, error: analyticsError.message });
+        logger.warn("Failed to get analytics count", {
+          userId,
+          tenantId,
+          error: analyticsError.message,
+        });
       }
 
       const stats = {
@@ -320,12 +340,12 @@ export const getUserStats = async (userId: string): Promise<UserStats> => {
         createdAt: user.created_at,
       };
 
-      logger.info("User statistics retrieved", { userId, stats });
+      logger.info("User statistics retrieved", { userId, tenantId, stats });
       return stats;
     },
     "get user statistics",
     {
-      context: { userId },
+      context: { userId, tenantId },
     }
   );
 };

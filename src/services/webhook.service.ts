@@ -61,13 +61,15 @@ export class WebhookService {
   /**
    * Get webhook by ID
    */
-  async getWebhookById(id: string): Promise<Webhook | null> {
+  async getWebhookById(id: string, tenantId?: string): Promise<Webhook | null> {
     try {
-      const { data: webhook, error } = await supabaseAdmin
-        .from("webhooks")
-        .select("*")
-        .eq("id", id)
-        .single();
+      let query = supabaseAdmin.from("webhooks").select("*").eq("id", id);
+
+      if (tenantId) {
+        query = query.eq("tenant_id", tenantId);
+      }
+
+      const { data: webhook, error } = await query.single();
 
       if (error) {
         if (error.code === "PGRST116") {
@@ -81,6 +83,7 @@ export class WebhookService {
       logger.error("Get webhook by ID service error", {
         error: error instanceof Error ? error.message : "Unknown error",
         webhookId: id,
+        tenantId,
       });
       throw error;
     }
@@ -91,7 +94,8 @@ export class WebhookService {
    */
   async getWebhooksByAgentId(
     agentId: string,
-    options: WebhookListOptions = {}
+    options: WebhookListOptions = {},
+    tenantId?: string
   ): Promise<WebhookListResponse> {
     try {
       const { page = 1, limit = 10, eventType } = options;
@@ -103,6 +107,10 @@ export class WebhookService {
         .eq("agent_id", agentId)
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
+
+      if (tenantId) {
+        query = query.eq("tenant_id", tenantId);
+      }
 
       if (eventType) {
         query = query.eq("event_type", eventType);
@@ -133,22 +141,26 @@ export class WebhookService {
   /**
    * Update webhook
    */
-  async updateWebhook(id: string, data: WebhookUpdate): Promise<Webhook> {
+  async updateWebhook(id: string, data: WebhookUpdate, tenantId?: string): Promise<Webhook> {
     try {
       logger.info("Updating webhook", {
         webhookId: id,
         updates: Object.keys(data),
+        tenantId,
       });
 
-      const { data: webhook, error } = await supabaseAdmin
-        .from("webhooks")
-        .update({
-          ...data,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", id)
-        .select()
-        .single();
+      const updateData = {
+        ...data,
+        updated_at: new Date().toISOString(),
+      };
+
+      let query = supabaseAdmin.from("webhooks").update(updateData).eq("id", id);
+
+      if (tenantId) {
+        query = query.eq("tenant_id", tenantId);
+      }
+
+      const { data: webhook, error } = await query.select().single();
 
       if (error) {
         if (error.code === "PGRST116") {
@@ -157,8 +169,13 @@ export class WebhookService {
         throw new Error(`Failed to update webhook: ${error.message}`);
       }
 
+      if (!webhook) {
+        throw new Error("Webhook not found");
+      }
+
       logger.info("Webhook updated successfully", {
         webhookId: webhook.id,
+        tenantId,
       });
 
       return webhook;
@@ -166,6 +183,7 @@ export class WebhookService {
       logger.error("Update webhook service error", {
         error: error instanceof Error ? error.message : "Unknown error",
         webhookId: id,
+        tenantId,
       });
       throw error;
     }
@@ -174,21 +192,28 @@ export class WebhookService {
   /**
    * Delete webhook
    */
-  async deleteWebhook(id: string): Promise<void> {
+  async deleteWebhook(id: string, tenantId?: string): Promise<void> {
     try {
-      logger.info("Deleting webhook", { webhookId: id });
+      logger.info("Deleting webhook", { webhookId: id, tenantId });
 
-      const { error } = await supabaseAdmin.from("webhooks").delete().eq("id", id);
+      let query = supabaseAdmin.from("webhooks").delete().eq("id", id);
+
+      if (tenantId) {
+        query = query.eq("tenant_id", tenantId);
+      }
+
+      const { error } = await query;
 
       if (error) {
         throw new Error(`Failed to delete webhook: ${error.message}`);
       }
 
-      logger.info("Webhook deleted successfully", { webhookId: id });
+      logger.info("Webhook deleted successfully", { webhookId: id, tenantId });
     } catch (error) {
       logger.error("Delete webhook service error", {
         error: error instanceof Error ? error.message : "Unknown error",
         webhookId: id,
+        tenantId,
       });
       throw error;
     }
@@ -197,13 +222,18 @@ export class WebhookService {
   /**
    * Check if user owns webhook
    */
-  async isWebhookOwner(webhookId: string, userId: string): Promise<boolean> {
+  async isWebhookOwner(webhookId: string, userId: string, tenantId?: string): Promise<boolean> {
     try {
-      const { data, error } = await supabaseAdmin
+      let query = supabaseAdmin
         .from("webhooks")
         .select("agent_id, agents(owner_id)")
-        .eq("id", webhookId)
-        .single();
+        .eq("id", webhookId);
+
+      if (tenantId) {
+        query = query.eq("tenant_id", tenantId);
+      }
+
+      const { data, error } = await query.single();
 
       if (error || !data) {
         return false;
@@ -224,6 +254,7 @@ export class WebhookService {
         error: error instanceof Error ? error.message : "Unknown error",
         webhookId,
         userId,
+        tenantId,
       });
       return false;
     }
@@ -232,13 +263,19 @@ export class WebhookService {
   /**
    * Get webhook statistics for an agent
    */
-  async getWebhookStats(agentId: string): Promise<WebhookStats> {
+  async getWebhookStats(agentId: string, tenantId?: string): Promise<WebhookStats> {
     try {
       // Get total count and group by event type
-      const { data: webhooks, error } = await supabaseAdmin
+      let query = supabaseAdmin
         .from("webhooks")
         .select("event_type, created_at, updated_at")
         .eq("agent_id", agentId);
+
+      if (tenantId) {
+        query = query.eq("tenant_id", tenantId);
+      }
+
+      const { data: webhooks, error } = await query;
 
       if (error) {
         throw new Error(`Failed to get webhook stats: ${error.message}`);
@@ -269,6 +306,10 @@ export class WebhookService {
           created: recentCreated,
           updated: recentUpdated,
         },
+        totalHandlers: webhooks?.length || 0,
+        handlersByProvider: {},
+        registeredProviders: [],
+        tenantId,
       };
     } catch (error) {
       logger.error("Get webhook stats service error", {
@@ -285,23 +326,26 @@ export class WebhookService {
   async searchWebhooks(
     query: string,
     userId: string,
-    options: WebhookSearchOptions = {}
+    options: WebhookSearchOptions = {},
+    tenantId?: string
   ): Promise<WebhookListResponse> {
     try {
       const { page = 1, limit = 10 } = options;
       const offset = (page - 1) * limit;
 
-      const {
-        data: webhooks,
-        error,
-        count,
-      } = await supabaseAdmin
+      let dbQuery = supabaseAdmin
         .from("webhooks")
         .select("*, agents!inner(owner_id)", { count: "exact" })
         .eq("agents.owner_id", userId)
         .or(`event_type.ilike.%${query}%,url.ilike.%${query}%`)
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
+
+      if (tenantId) {
+        dbQuery = dbQuery.eq("tenant_id", tenantId);
+      }
+
+      const { data: webhooks, error, count } = await dbQuery;
 
       if (error) {
         throw new Error(`Failed to search webhooks: ${error.message}`);

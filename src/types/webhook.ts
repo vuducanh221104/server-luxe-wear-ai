@@ -54,6 +54,7 @@ export interface WebhookEvent {
   timestamp: Date;
   data: Record<string, unknown>;
   headers: Record<string, string>;
+  tenantId?: string;
 }
 
 /**
@@ -64,6 +65,7 @@ export interface WebhookResult {
   eventId: string;
   provider: WebhookProvider;
   type: string;
+  tenantId?: string;
   error?: string;
   processingTime: number;
 }
@@ -83,9 +85,10 @@ export interface WebhookStats {
     created: number;
     updated: number;
   };
-  totalHandlers?: number;
-  handlersByProvider?: Record<string, number>;
-  registeredProviders?: WebhookProvider[];
+  totalHandlers: number;
+  handlersByProvider: Record<string, number>;
+  registeredProviders: WebhookProvider[];
+  tenantId?: string;
 }
 
 /**
@@ -95,5 +98,6 @@ export interface WebhookHealthCheck {
   status: "healthy" | "unhealthy";
   configuredProviders: WebhookProvider[];
   totalHandlers: number;
+  tenantId?: string;
   timestamp: string;
 }

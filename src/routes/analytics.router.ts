@@ -1,26 +1,50 @@
 /**
  * @file analytics.router.ts
- * @description Analytics and statistics routes
+ * @description Analytics and statistics routes with multi-tenancy support
  */
 
 import { Router } from "express";
+import * as analyticsController from "../controllers/analytics.controller";
+import { authMiddleware } from "../middlewares/auth.middleware";
+import { adminMiddleware } from "../middlewares/admin.middleware";
+import { tenantMiddleware } from "../middlewares/tenant.middleware";
+import { param } from "express-validator";
 
 const router = Router();
 
-// TODO: Import controllers and middlewares
-// import * as analyticsController from "../controllers/analytics.controller";
-// import { authenticate } from "../middlewares/auth.middleware";
+// ===========================
+// User Routes (Analytics)
+// ===========================
 
-// GET /api/analytics/dashboard - Get dashboard analytics
-// router.get("/dashboard", authenticate, analyticsController.getDashboard);
+/**
+ * GET /api/analytics/user
+ * Get user analytics
+ * @access User + Tenant Context
+ */
+router.get("/user", authMiddleware, tenantMiddleware, analyticsController.getUserAnalytics);
 
-// GET /api/analytics/agents/:id/stats - Get agent statistics
-// router.get("/agents/:id/stats", authenticate, analyticsController.getAgentStats);
+/**
+ * GET /api/analytics/agents/:agentId
+ * Get agent analytics
+ * @access User (Agent Owner) + Tenant Context
+ */
+router.get(
+  "/agents/:agentId",
+  authMiddleware,
+  tenantMiddleware,
+  [param("agentId").isUUID().withMessage("Agent ID must be a valid UUID")],
+  analyticsController.getAgentAnalytics
+);
 
-// GET /api/analytics/conversations - Get conversation analytics
-// router.get("/conversations", authenticate, analyticsController.getConversations);
+// ===========================
+// Admin Routes (System Analytics)
+// ===========================
 
-// GET /api/analytics/knowledge/usage - Get knowledge usage statistics
-// router.get("/knowledge/usage", authenticate, analyticsController.getKnowledgeUsage);
+/**
+ * GET /api/analytics/system
+ * Get system analytics (Admin only)
+ * @access Admin
+ */
+router.get("/system", authMiddleware, adminMiddleware, analyticsController.getSystemAnalytics);
 
 export default router;
