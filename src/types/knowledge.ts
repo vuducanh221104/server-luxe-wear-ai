@@ -297,6 +297,26 @@ export interface KnowledgeImportResult {
 }
 
 /**
+ * Admin knowledge entry with agent information
+ * Used for admin endpoints that include agent details
+ */
+export interface AdminKnowledgeEntry {
+  id: string;
+  title: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  agent_id: string | null;
+  tenant_id: string;
+  created_at: string;
+  updated_at: string;
+  agent?: {
+    id: string;
+    name: string;
+    owner_id: string;
+  } | null;
+}
+
+/**
  * Knowledge validation result
  */
 export interface KnowledgeValidationResult {

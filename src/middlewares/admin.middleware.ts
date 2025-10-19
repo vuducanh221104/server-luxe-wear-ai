@@ -25,9 +25,8 @@ export const adminMiddleware = async (
     }
 
     // Check if user has admin role
-    // Note: This assumes user metadata contains role information
-    const userMetadata = req.user.user_metadata || {};
-    const userRole = userMetadata.role || req.user.role;
+    // Priority: app_metadata.role > user.role
+    const userRole = req.user.app_metadata?.role || req.user.role;
 
     if (userRole !== "admin" && userRole !== "super_admin") {
       logger.warn("Unauthorized admin access attempt", {
@@ -76,8 +75,7 @@ export const superAdminMiddleware = async (
       return errorResponse(res, "Authentication required", 401);
     }
 
-    const userMetadata = req.user.user_metadata || {};
-    const userRole = userMetadata.role || req.user.role;
+    const userRole = req.user.app_metadata?.role || req.user.role;
 
     if (userRole !== "super_admin") {
       logger.warn("Unauthorized super admin access attempt", {

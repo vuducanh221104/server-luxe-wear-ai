@@ -89,40 +89,6 @@ export const searchKnowledgeValidator = [
 ];
 
 /**
- * Validate batch upload knowledge request
- */
-export const batchUploadKnowledgeValidator = [
-  body("entries")
-    .isArray({ min: 1, max: 100 })
-    .withMessage("Entries must be an array with 1-100 items"),
-
-  body("entries.*.title")
-    .isString()
-    .withMessage("Each entry title must be a string")
-    .isLength({ min: 1, max: 200 })
-    .withMessage("Each entry title must be between 1 and 200 characters")
-    .trim()
-    .notEmpty()
-    .withMessage("Each entry title is required"),
-
-  body("entries.*.content")
-    .isString()
-    .withMessage("Each entry content must be a string")
-    .isLength({ min: 10, max: 50000 })
-    .withMessage("Each entry content must be between 10 and 50000 characters")
-    .trim()
-    .notEmpty()
-    .withMessage("Each entry content is required"),
-
-  body("entries.*.metadata")
-    .optional()
-    .isObject()
-    .withMessage("Each entry metadata must be an object"),
-
-  body("agentId").optional().isUUID().withMessage("Agent ID must be a valid UUID"),
-];
-
-/**
  * Validate pagination query parameters
  */
 export const paginationValidator = [
@@ -170,11 +136,6 @@ export const deleteKnowledgeValidator = knowledgeIdValidator;
  * Combined validator for search knowledge endpoint
  */
 export const searchKnowledgeEndpointValidator = searchKnowledgeValidator;
-
-/**
- * Combined validator for batch upload endpoint
- */
-export const batchUploadEndpointValidator = batchUploadKnowledgeValidator;
 
 /**
  * Validate file upload request

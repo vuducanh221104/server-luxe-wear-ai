@@ -17,9 +17,9 @@ import { tenantService } from "./tenant.service";
  * @returns Auth response with user and tokens
  */
 export const register = async (data: RegisterData): Promise<AuthResponse> => {
-  const { email, password, name } = data;
+  const { email, password, name, role } = data;
 
-  logger.info("Attempting user registration", { email });
+  logger.info("Attempting user registration", { email, role });
 
   try {
     // Register user with Supabase Auth
@@ -29,6 +29,7 @@ export const register = async (data: RegisterData): Promise<AuthResponse> => {
       options: {
         data: {
           name: name || email.split("@")[0], // Use email prefix as default name
+          role: role || "authenticated",
         },
       },
     });
@@ -43,10 +44,44 @@ export const register = async (data: RegisterData): Promise<AuthResponse> => {
       throw new Error("Registration failed - no user data returned");
     }
 
+    // If role is admin, update user role in auth.users table
+    if (role === "admin") {
+      try {
+        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+          authData.user.id,
+          {
+            user_metadata: {
+              ...authData.user.user_metadata,
+              name: name || email.split("@")[0],
+            },
+          }
+        );
+
+        if (updateError) {
+          logger.error("Failed to set admin role", {
+            userId: authData.user.id,
+            error: updateError.message,
+          });
+          // Don't throw error here, user is still registered successfully
+        } else {
+          logger.info("Admin role set successfully", {
+            userId: authData.user.id,
+            email: authData.user.email,
+          });
+        }
+      } catch (updateError) {
+        logger.error("Failed to update user role", {
+          userId: authData.user.id,
+          error: updateError instanceof Error ? updateError.message : "Unknown error",
+        });
+      }
+    }
+
     // User registered successfully - no email confirmation needed
     logger.info("User registered successfully", {
       userId: authData.user.id,
       email: authData.user.email,
+      role,
     });
 
     return {

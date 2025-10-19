@@ -32,6 +32,11 @@ export const registerValidator: ValidationChain[] = [
     .trim()
     .isLength({ min: 2, max: 100 })
     .withMessage("Name must be between 2 and 100 characters"),
+
+  body("role")
+    .optional()
+    .isIn(["authenticated", "admin"])
+    .withMessage("Role must be either 'authenticated' or 'admin'"),
 ];
 
 /**

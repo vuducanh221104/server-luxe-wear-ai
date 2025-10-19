@@ -12,7 +12,6 @@ import {
   getKnowledgeByIdValidator,
   deleteKnowledgeValidator,
   searchKnowledgeEndpointValidator,
-  batchUploadEndpointValidator,
   uploadFileEndpointValidator,
   uploadMultipleFilesEndpointValidator,
   knowledgeListValidator,
@@ -117,20 +116,6 @@ router.post(
   rateLimiterMiddleware,
   searchKnowledgeEndpointValidator,
   knowledgeController.searchKnowledgeBase
-);
-
-/**
- * POST /api/knowledge/batch
- * Batch upload knowledge entries
- * @access User + Tenant Context
- */
-router.post(
-  "/batch",
-  authMiddleware,
-  tenantMiddleware,
-  strictRateLimiter,
-  batchUploadEndpointValidator,
-  knowledgeController.batchUploadKnowledge
 );
 
 /**

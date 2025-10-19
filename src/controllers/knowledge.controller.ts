@@ -11,16 +11,9 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { successResponse, errorResponse } from "../utils/response";
-import { supabaseAdmin } from "../config/supabase";
-import {
-  searchKnowledge,
-  storeKnowledge,
-  batchStoreKnowledge,
-  deleteKnowledge as deleteKnowledgeVector,
-} from "../utils/vectorizer";
-import { extractTextFromFile, chunkText, validateFile } from "../utils/fileProcessor";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
-import logger from "../config/logger";
+import { KnowledgeService } from "../services/knowledge.service";
+import { AdminKnowledgeEntry } from "../types/knowledge";
 import { v4 as uuidv4 } from "uuid";
 
 /**
@@ -28,6 +21,11 @@ import { v4 as uuidv4 } from "uuid";
  * Object-based controller for knowledge operations
  */
 export class KnowledgeController {
+  private knowledgeService: KnowledgeService;
+
+  constructor() {
+    this.knowledgeService = new KnowledgeService();
+  }
   // ===========================
   // User Routes (Knowledge Owners)
   // ===========================
@@ -56,54 +54,23 @@ export class KnowledgeController {
         const { title, content, metadata, agentId } = req.body;
         const knowledgeId = uuidv4();
 
-        // Store in Supabase database
-        const { data: knowledge, error } = await supabaseAdmin
-          .from("knowledge")
-          .insert({
-            id: knowledgeId,
-            title,
-            content,
-            metadata: metadata || {},
-            agent_id: agentId || null,
-            tenant_id: req.tenant.id,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (error) {
-          logger.error("Create knowledge database error", { error: error.message });
-          throw new Error(error.message);
-        }
-
-        // Store in vector database (Pinecone)
-        try {
-          await storeKnowledge(knowledgeId, content, {
-            userId: req.user.id,
-            tenantId: req.tenant.id,
-            title,
-            agentId: agentId || null,
-            ...metadata,
-          });
-        } catch (vectorError) {
-          // If vector storage fails, remove from database
-          await supabaseAdmin.from("knowledge").delete().eq("id", knowledgeId);
-          logger.error("Vector storage failed, rolled back database entry", {
-            knowledgeId,
-            tenantId: req.tenant.id,
-            error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          });
-          throw new Error("Failed to store knowledge in vector database");
-        }
-
-        logger.info("Knowledge created", {
-          knowledgeId,
-          userId: req.user.id,
-          tenantId: req.tenant.id,
+        // Prepare data for service
+        const knowledgeData = {
+          id: knowledgeId,
           title,
-          contentLength: content.length,
-        });
+          content,
+          metadata: {
+            ...metadata,
+            userId: req.user.id,
+          },
+          agent_id: agentId || null,
+          tenant_id: req.tenant.id,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        // Use service to create knowledge (includes vector storage)
+        const knowledge = await this.knowledgeService.createKnowledge(knowledgeData);
 
         return successResponse(
           res,
@@ -156,42 +123,18 @@ export class KnowledgeController {
         const page = parseInt(req.query.page as string) || 1;
         const perPage = Math.min(parseInt(req.query.perPage as string) || 10, 50);
         const agentId = req.query.agentId as string;
-        const offset = (page - 1) * perPage;
 
-        // Build query
-        let query = supabaseAdmin
-          .from("knowledge")
-          .select("*", { count: "exact" })
-          .eq("tenant_id", req.tenant.id);
-
-        // Filter by agent if specified
-        if (agentId) {
-          query = query.eq("agent_id", agentId);
-        } else {
-          // Show knowledge not tied to specific agents for this tenant
-          query = query.is("agent_id", null);
-        }
-
-        const {
-          data: knowledge,
-          error,
-          count,
-        } = await query
-          .order("created_at", { ascending: false })
-          .range(offset, offset + perPage - 1);
-
-        if (error) {
-          logger.error("Get user knowledge error", { error: error.message });
-          throw new Error(error.message);
-        }
-
-        const total = count || 0;
-        const totalPages = Math.ceil(total / perPage);
+        // Use service to get user knowledge
+        const result = await this.knowledgeService.getUserKnowledge(req.tenant.id, {
+          page,
+          limit: perPage,
+          agentId,
+        });
 
         return successResponse(
           res,
           {
-            knowledge: knowledge.map((entry) => ({
+            knowledge: result.knowledge.map((entry) => ({
               id: entry.id,
               title: entry.title,
               content: entry.content,
@@ -200,12 +143,7 @@ export class KnowledgeController {
               createdAt: entry.created_at,
               updatedAt: entry.updated_at,
             })),
-            pagination: {
-              page,
-              perPage,
-              total,
-              totalPages,
-            },
+            pagination: result.pagination,
           },
           "Knowledge entries retrieved successfully"
         );
@@ -245,19 +183,11 @@ export class KnowledgeController {
 
         const { id } = req.params;
 
-        const { data: knowledge, error } = await supabaseAdmin
-          .from("knowledge")
-          .select("*")
-          .eq("id", id)
-          .eq("tenant_id", req.tenant.id)
-          .single();
+        // Use service to get knowledge by ID
+        const knowledge = await this.knowledgeService.getKnowledgeById(id, req.tenant.id);
 
-        if (error) {
-          if (error.code === "PGRST116") {
-            return errorResponse(res, "Knowledge entry not found", 404);
-          }
-          logger.error("Get knowledge by ID error", { error: error.message });
-          throw new Error(error.message);
+        if (!knowledge) {
+          return errorResponse(res, "Knowledge entry not found", 404);
         }
 
         return successResponse(
@@ -307,48 +237,8 @@ export class KnowledgeController {
 
         const { id } = req.params;
 
-        // Check if knowledge exists
-        const { data: existingKnowledge, error: fetchError } = await supabaseAdmin
-          .from("knowledge")
-          .select("id, title")
-          .eq("id", id)
-          .eq("tenant_id", req.tenant.id)
-          .single();
-
-        if (fetchError) {
-          if (fetchError.code === "PGRST116") {
-            return errorResponse(res, "Knowledge entry not found", 404);
-          }
-          throw new Error(fetchError.message);
-        }
-
-        // Delete from database
-        const { error } = await supabaseAdmin
-          .from("knowledge")
-          .delete()
-          .eq("id", id)
-          .eq("tenant_id", req.tenant.id);
-
-        if (error) {
-          logger.error("Delete knowledge database error", { error: error.message });
-          throw new Error(error.message);
-        }
-
-        // Delete from vector database
-        try {
-          await deleteKnowledgeVector(id);
-        } catch (vectorError) {
-          logger.warn("Vector deletion failed", {
-            knowledgeId: id,
-            error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          });
-        }
-
-        logger.info("Knowledge deleted", {
-          knowledgeId: id,
-          title: existingKnowledge.title,
-          userId: req.user.id,
-        });
+        // Use service to delete knowledge
+        await this.knowledgeService.deleteKnowledge(id, req.tenant.id);
 
         return successResponse(res, null, "Knowledge entry deleted successfully");
       },
@@ -386,65 +276,12 @@ export class KnowledgeController {
         const { id } = req.params;
         const { title, content, metadata } = req.body;
 
-        // Check if knowledge exists
-        const { data: existingKnowledge, error: fetchError } = await supabaseAdmin
-          .from("knowledge")
-          .select("*")
-          .eq("id", id)
-          .eq("tenant_id", req.tenant.id)
-          .single();
-
-        if (fetchError) {
-          if (fetchError.code === "PGRST116") {
-            return errorResponse(res, "Knowledge entry not found", 404);
-          }
-          throw new Error(fetchError.message);
-        }
-
-        // Update in database
-        const { data: knowledge, error } = await supabaseAdmin
-          .from("knowledge")
-          .update({
-            title: title || existingKnowledge.title,
-            content: content || existingKnowledge.content,
-            metadata: metadata || existingKnowledge.metadata,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", id)
-          .eq("tenant_id", req.tenant.id)
-          .select()
-          .single();
-
-        if (error) {
-          logger.error("Update knowledge database error", { error: error.message });
-          throw new Error(error.message);
-        }
-
-        // Update in vector database if content changed
-        if (content && content !== existingKnowledge.content) {
-          try {
-            await storeKnowledge(id, content, {
-              userId: req.user.id,
-              tenantId: req.tenant.id,
-              title: knowledge.title,
-              agentId: knowledge.agent_id,
-              ...knowledge.metadata,
-            });
-          } catch (vectorError) {
-            logger.warn("Vector update failed", {
-              knowledgeId: id,
-              tenantId: req.tenant.id,
-              error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-            });
-          }
-        }
-
-        logger.info("Knowledge updated", {
-          knowledgeId: id,
-          userId: req.user.id,
-          tenantId: req.tenant.id,
-          contentChanged: !!content,
-        });
+        // Use service to update knowledge
+        const knowledge = await this.knowledgeService.updateKnowledge(
+          id,
+          { title, content, metadata },
+          req.tenant.id
+        );
 
         return successResponse(
           res,
@@ -466,120 +303,6 @@ export class KnowledgeController {
           userId: req.user?.id,
           knowledgeId: req.params.id,
           updateFields: Object.keys(req.body || {}),
-        },
-      }
-    );
-  }
-
-  /**
-   * Batch upload knowledge entries
-   * POST /api/knowledge/batch
-   * @access User + Tenant Context
-   */
-  async batchUploadKnowledge(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
-      async () => {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
-        }
-
-        if (!req.user) {
-          return errorResponse(res, "User not authenticated", 401);
-        }
-
-        if (!req.tenant) {
-          return errorResponse(res, "Tenant context not found", 400);
-        }
-
-        const { entries, agentId } = req.body;
-
-        if (!Array.isArray(entries) || entries.length === 0) {
-          return errorResponse(res, "Entries array is required and cannot be empty", 400);
-        }
-
-        if (entries.length > 100) {
-          return errorResponse(res, "Maximum 100 entries allowed per batch", 400);
-        }
-
-        const knowledgeEntries = entries.map((entry) => ({
-          id: uuidv4(),
-          title: entry.title,
-          content: entry.content,
-          metadata: entry.metadata || {},
-          agent_id: agentId || null,
-          tenant_id: req.tenant!.id,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }));
-
-        // Store in database
-        const { data: createdEntries, error } = await supabaseAdmin
-          .from("knowledge")
-          .insert(knowledgeEntries)
-          .select();
-
-        if (error) {
-          logger.error("Batch create knowledge database error", { error: error.message });
-          throw new Error(error.message);
-        }
-
-        // Store in vector database
-        try {
-          const vectorEntries = knowledgeEntries.map((entry) => ({
-            id: entry.id,
-            content: entry.content,
-            metadata: {
-              userId: req.user!.id,
-              title: entry.title,
-              agentId: entry.agent_id,
-              ...entry.metadata,
-            },
-          }));
-
-          await batchStoreKnowledge(vectorEntries);
-        } catch (vectorError) {
-          // If vector storage fails, remove from database
-          const ids = knowledgeEntries.map((entry) => entry.id);
-          await supabaseAdmin.from("knowledge").delete().in("id", ids);
-
-          logger.error("Batch vector storage failed, rolled back database entries", {
-            count: entries.length,
-            error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          });
-          throw new Error("Failed to store knowledge entries in vector database");
-        }
-
-        logger.info("Batch knowledge created", {
-          userId: req.user.id,
-          count: entries.length,
-          agentId,
-        });
-
-        return successResponse(
-          res,
-          {
-            created:
-              createdEntries?.map((entry) => ({
-                id: entry.id,
-                title: entry.title,
-                content: entry.content,
-                metadata: entry.metadata,
-                agentId: entry.agent_id,
-                createdAt: entry.created_at,
-              })) || [],
-            count: createdEntries?.length || 0,
-          },
-          "Knowledge entries created successfully",
-          201
-        );
-      },
-      "batch upload knowledge",
-      {
-        context: {
-          userId: req.user?.id,
-          entryCount: req.body?.entries?.length,
-          agentId: req.body?.agentId,
         },
       }
     );
@@ -608,61 +331,18 @@ export class KnowledgeController {
 
         const { query, topK = 5, agentId } = req.body;
 
-        logger.info("Knowledge search request", {
-          userId: req.user.id,
-          tenantId: req.tenant.id,
-          queryLength: query.length,
-          topK,
-          agentId,
-        });
-
-        // Search using vector similarity
-        const searchResults = await searchKnowledge(query, req.user.id, req.tenant!.id, topK);
-
-        // Get full knowledge entries from database
-        const knowledgeIds = searchResults.map((result) => result.id);
-
-        let knowledgeEntries = [];
-        if (knowledgeIds.length > 0) {
-          const { data, error } = await supabaseAdmin
-            .from("knowledge")
-            .select("*")
-            .in("id", knowledgeIds)
-            .eq("tenant_id", req.tenant.id);
-
-          if (error) {
-            logger.error("Search knowledge database error", { error: error.message });
-            throw new Error(error.message);
-          }
-
-          knowledgeEntries = data || [];
-        }
-
-        // Combine search results with database entries
-        const results = searchResults.map((result) => {
-          const dbEntry = knowledgeEntries.find((entry) => entry.id === result.id);
-          return {
-            id: result.id,
-            score: result.score,
-            title: dbEntry?.title || result.metadata?.title || "Untitled",
-            content: dbEntry?.content || result.metadata?.content || "",
-            metadata: dbEntry?.metadata || result.metadata || {},
-            agentId: dbEntry?.agent_id || result.metadata?.agentId,
-            createdAt: dbEntry?.created_at,
-            updatedAt: dbEntry?.updated_at,
-          };
-        });
+        // Use service to search knowledge
+        const results = await this.knowledgeService.searchKnowledge(
+          query,
+          req.user.id,
+          req.tenant.id,
+          topK
+        );
 
         // Filter by agent if specified
         const filteredResults = agentId
           ? results.filter((result) => result.agentId === agentId)
           : results;
-
-        logger.info("Knowledge search completed", {
-          userId: req.user.id,
-          resultsFound: filteredResults.length,
-          topScore: filteredResults[0]?.score || 0,
-        });
 
         return successResponse(
           res,
@@ -703,144 +383,28 @@ export class KnowledgeController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         if (!req.file) {
           return errorResponse(res, "No file provided", 400);
         }
 
-        // Validate file
-        const validation = validateFile(req.file);
-        if (!validation.isValid) {
-          return errorResponse(res, validation.error || "Invalid file", 400);
-        }
-
         const { agentId, title, chunkSize = 1000, overlap = 100 } = req.body;
 
-        logger.info("File upload started", {
-          fileName: req.file.originalname,
-          fileSize: req.file.size,
-          userId: req.user.id,
+        // Use service to process file upload
+        const result = await this.knowledgeService.processFileUpload({
+          file: req.file,
           agentId,
+          title,
+          chunkSize: parseInt(chunkSize),
+          overlap: parseInt(overlap),
+          userId: req.user.id,
+          tenantId: req.tenant.id,
         });
 
-        // Extract text from file
-        const extractedText = await extractTextFromFile(req.file);
-
-        // Use provided title or file name
-        const knowledgeTitle = title || extractedText.metadata.fileName.replace(/\.[^/.]+$/, "");
-
-        // Chunk text if it's large
-        const chunks = chunkText(extractedText.content, parseInt(chunkSize), parseInt(overlap));
-
-        const knowledgeEntries = [];
-        const vectorEntries = [];
-
-        // Create knowledge entries for each chunk
-        for (let i = 0; i < chunks.length; i++) {
-          const chunkId = uuidv4();
-          const chunkTitle =
-            chunks.length > 1 ? `${knowledgeTitle} (Part ${i + 1})` : knowledgeTitle;
-
-          const knowledgeEntry = {
-            id: chunkId,
-            title: chunkTitle,
-            content: chunks[i],
-            metadata: {
-              ...extractedText.metadata,
-              chunkIndex: i,
-              totalChunks: chunks.length,
-              isFromFile: true,
-            },
-            agent_id: agentId || null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-
-          knowledgeEntries.push(knowledgeEntry);
-
-          vectorEntries.push({
-            id: chunkId,
-            content: chunks[i],
-            metadata: {
-              userId: req.user.id,
-              title: chunkTitle,
-              agentId: agentId || null,
-              fileName: extractedText.metadata.fileName,
-              fileType: extractedText.metadata.fileType,
-              chunkIndex: i,
-              totalChunks: chunks.length,
-              isFromFile: true,
-            },
-          });
-        }
-
-        // Store in database
-        const { data: createdEntries, error } = await supabaseAdmin
-          .from("knowledge")
-          .insert(knowledgeEntries)
-          .select();
-
-        if (error) {
-          logger.error("File upload database error", {
-            error: error.message,
-            fileName: req.file.originalname,
-            userId: req.user.id,
-          });
-          throw new Error(error.message);
-        }
-
-        // Store in vector database
-        try {
-          await batchStoreKnowledge(vectorEntries);
-        } catch (vectorError) {
-          // If vector storage fails, remove from database
-          const ids = knowledgeEntries.map((entry) => entry.id);
-          await supabaseAdmin.from("knowledge").delete().in("id", ids);
-
-          logger.error("File upload vector storage failed, rolled back database entries", {
-            fileName: req.file.originalname,
-            chunksCount: chunks.length,
-            error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-            userId: req.user.id,
-          });
-          throw new Error("Failed to store file content in vector database");
-        }
-
-        logger.info("File upload completed successfully", {
-          fileName: req.file.originalname,
-          chunksCreated: chunks.length,
-          totalContentLength: extractedText.content.length,
-          userId: req.user.id,
-          agentId,
-        });
-
-        return successResponse(
-          res,
-          {
-            file: {
-              originalName: req.file.originalname,
-              size: req.file.size,
-              type: req.file.mimetype,
-            },
-            extracted: {
-              contentLength: extractedText.content.length,
-              wordCount: extractedText.metadata.wordCount,
-              pageCount: extractedText.metadata.pageCount,
-            },
-            knowledge: {
-              chunksCreated: chunks.length,
-              entries:
-                createdEntries?.map((entry) => ({
-                  id: entry.id,
-                  title: entry.title,
-                  contentPreview: entry.content.substring(0, 100) + "...",
-                  agentId: entry.agent_id,
-                  createdAt: entry.created_at,
-                })) || [],
-            },
-          },
-          "File uploaded and processed successfully",
-          201
-        );
+        return successResponse(res, result, "File uploaded and processed successfully", 201);
       },
       "upload file",
       {
@@ -872,6 +436,10 @@ export class KnowledgeController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
+        if (!req.tenant) {
+          return errorResponse(res, "Tenant context not found", 400);
+        }
+
         if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
           return errorResponse(res, "No files provided", 400);
         }
@@ -883,157 +451,17 @@ export class KnowledgeController {
           return errorResponse(res, "Maximum 5 files allowed per batch", 400);
         }
 
-        logger.info("Batch file upload started", {
-          fileCount: files.length,
-          fileNames: files.map((f) => f.originalname),
-          userId: req.user.id,
+        // Use service to process multiple files upload
+        const result = await this.knowledgeService.processMultipleFilesUpload({
+          files,
           agentId,
+          chunkSize: parseInt(chunkSize),
+          overlap: parseInt(overlap),
+          userId: req.user.id,
+          tenantId: req.tenant.id,
         });
 
-        const allKnowledgeEntries = [];
-        const allVectorEntries = [];
-        const processedFiles = [];
-
-        // Process each file
-        for (const file of files) {
-          // Validate file
-          const validation = validateFile(file);
-          if (!validation.isValid) {
-            logger.warn("Skipping invalid file", {
-              fileName: file.originalname,
-              error: validation.error,
-              userId: req.user.id,
-            });
-            continue;
-          }
-
-          try {
-            // Extract text from file
-            const extractedText = await extractTextFromFile(file);
-            const knowledgeTitle = extractedText.metadata.fileName.replace(/\.[^/.]+$/, "");
-
-            // Chunk text if it's large
-            const chunks = chunkText(extractedText.content, parseInt(chunkSize), parseInt(overlap));
-
-            // Create knowledge entries for each chunk
-            for (let i = 0; i < chunks.length; i++) {
-              const chunkId = uuidv4();
-              const chunkTitle =
-                chunks.length > 1 ? `${knowledgeTitle} (Part ${i + 1})` : knowledgeTitle;
-
-              const knowledgeEntry = {
-                id: chunkId,
-                title: chunkTitle,
-                content: chunks[i],
-                metadata: {
-                  ...extractedText.metadata,
-                  chunkIndex: i,
-                  totalChunks: chunks.length,
-                  isFromFile: true,
-                },
-                agent_id: agentId || null,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              };
-
-              allKnowledgeEntries.push(knowledgeEntry);
-
-              allVectorEntries.push({
-                id: chunkId,
-                content: chunks[i],
-                metadata: {
-                  userId: req.user.id,
-                  title: chunkTitle,
-                  agentId: agentId || null,
-                  fileName: extractedText.metadata.fileName,
-                  fileType: extractedText.metadata.fileType,
-                  chunkIndex: i,
-                  totalChunks: chunks.length,
-                  isFromFile: true,
-                },
-              });
-            }
-
-            processedFiles.push({
-              fileName: file.originalname,
-              chunksCreated: chunks.length,
-              contentLength: extractedText.content.length,
-              wordCount: extractedText.metadata.wordCount,
-            });
-          } catch (fileError) {
-            logger.error("Failed to process file in batch", {
-              fileName: file.originalname,
-              error: fileError instanceof Error ? fileError.message : "Unknown error",
-              userId: req.user.id,
-            });
-            // Continue with other files
-          }
-        }
-
-        if (allKnowledgeEntries.length === 0) {
-          return errorResponse(res, "No files could be processed successfully", 400);
-        }
-
-        // Store in database
-        const { data: createdEntries, error } = await supabaseAdmin
-          .from("knowledge")
-          .insert(allKnowledgeEntries)
-          .select();
-
-        if (error) {
-          logger.error("Batch file upload database error", {
-            error: error.message,
-            fileCount: files.length,
-            userId: req.user.id,
-          });
-          throw new Error(error.message);
-        }
-
-        // Store in vector database
-        try {
-          await batchStoreKnowledge(allVectorEntries);
-        } catch (vectorError) {
-          // If vector storage fails, remove from database
-          const ids = allKnowledgeEntries.map((entry) => entry.id);
-          await supabaseAdmin.from("knowledge").delete().in("id", ids);
-
-          logger.error("Batch file upload vector storage failed, rolled back database entries", {
-            fileCount: files.length,
-            chunksCount: allKnowledgeEntries.length,
-            error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-            userId: req.user.id,
-          });
-          throw new Error("Failed to store file contents in vector database");
-        }
-
-        logger.info("Batch file upload completed successfully", {
-          fileCount: files.length,
-          totalChunksCreated: allKnowledgeEntries.length,
-          processedFiles: processedFiles.length,
-          userId: req.user.id,
-          agentId,
-        });
-
-        return successResponse(
-          res,
-          {
-            filesProcessed: processedFiles.length,
-            totalChunksCreated: allKnowledgeEntries.length,
-            files: processedFiles,
-            knowledge: {
-              entries:
-                createdEntries?.map((entry) => ({
-                  id: entry.id,
-                  title: entry.title,
-                  contentPreview: entry.content.substring(0, 100) + "...",
-                  agentId: entry.agent_id,
-                  createdAt: entry.created_at,
-                })) || [],
-            },
-          },
-          "Files uploaded and processed successfully",
-          201
-        );
+        return successResponse(res, result, "Files uploaded and processed successfully", 201);
       },
       "upload multiple files",
       {
@@ -1066,47 +494,17 @@ export class KnowledgeController {
 
         const page = parseInt(req.query.page as string) || 1;
         const perPage = Math.min(parseInt(req.query.perPage as string) || 10, 100);
-        const offset = (page - 1) * perPage;
 
-        const {
-          data: knowledge,
-          error,
-          count,
-        } = await supabaseAdmin
-          .from("knowledge")
-          .select(
-            `
-          *,
-          agent:agent_id (
-            id,
-            name,
-            owner_id
-          )
-        `,
-            { count: "exact" }
-          )
-          .order("created_at", { ascending: false })
-          .range(offset, offset + perPage - 1);
-
-        if (error) {
-          logger.error("Admin get all knowledge error", { error: error.message });
-          throw new Error(error.message);
-        }
-
-        const total = count || 0;
-        const totalPages = Math.ceil(total / perPage);
-
-        logger.info("Admin: All knowledge retrieved", {
-          adminId: req.user?.id,
-          total,
+        // Use service to get all knowledge
+        const result = await this.knowledgeService.getAllKnowledge({
           page,
-          perPage,
+          limit: perPage,
         });
 
         return successResponse(
           res,
           {
-            knowledge: knowledge.map((entry) => ({
+            knowledge: result.knowledge.map((entry: AdminKnowledgeEntry) => ({
               id: entry.id,
               title: entry.title,
               content: entry.content.substring(0, 200) + (entry.content.length > 200 ? "..." : ""),
@@ -1115,12 +513,7 @@ export class KnowledgeController {
               createdAt: entry.created_at,
               updatedAt: entry.updated_at,
             })),
-            pagination: {
-              page,
-              perPage,
-              total,
-              totalPages,
-            },
+            pagination: result.pagination,
           },
           "All knowledge entries retrieved successfully"
         );
@@ -1144,53 +537,10 @@ export class KnowledgeController {
   async getKnowledgeStats(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
-        // Get total knowledge count
-        const { count: totalKnowledge } = await supabaseAdmin
-          .from("knowledge")
-          .select("*", { count: "exact", head: true });
+        // Use service to get knowledge stats
+        const stats = await this.knowledgeService.getKnowledgeStats();
 
-        // Get knowledge with agents
-        const { count: knowledgeWithAgents } = await supabaseAdmin
-          .from("knowledge")
-          .select("*", { count: "exact", head: true })
-          .not("agent_id", "is", null);
-
-        // Get knowledge created in last 30 days
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-        const { count: recentKnowledge } = await supabaseAdmin
-          .from("knowledge")
-          .select("*", { count: "exact", head: true })
-          .gte("created_at", thirtyDaysAgo.toISOString());
-
-        // Get average content length
-        const { data: contentStats } = await supabaseAdmin.from("knowledge").select("content");
-
-        const avgContentLength = contentStats?.length
-          ? Math.round(
-              contentStats.reduce((sum, entry) => sum + entry.content.length, 0) /
-                contentStats.length
-            )
-          : 0;
-
-        logger.info("Admin: Knowledge stats retrieved", {
-          adminId: req.user?.id,
-          totalKnowledge,
-          knowledgeWithAgents,
-        });
-
-        return successResponse(
-          res,
-          {
-            totalKnowledge: totalKnowledge || 0,
-            knowledgeWithAgents: knowledgeWithAgents || 0,
-            standaloneKnowledge: (totalKnowledge || 0) - (knowledgeWithAgents || 0),
-            recentKnowledge: recentKnowledge || 0,
-            avgContentLength,
-          },
-          "Knowledge statistics retrieved successfully"
-        );
+        return successResponse(res, stats, "Knowledge statistics retrieved successfully");
       },
       "get knowledge stats (admin)",
       {
@@ -1216,46 +566,8 @@ export class KnowledgeController {
 
         const { id } = req.params;
 
-        // Get knowledge info before deletion (for logging)
-        const { data: knowledge } = await supabaseAdmin
-          .from("knowledge")
-          .select("id, title, agent_id")
-          .eq("id", id)
-          .single();
-
-        if (!knowledge) {
-          return errorResponse(res, "Knowledge entry not found", 404);
-        }
-
-        // Force delete (bypass ownership check)
-        const { error } = await supabaseAdmin.from("knowledge").delete().eq("id", id);
-
-        if (error) {
-          logger.error("Admin force delete knowledge failed", {
-            knowledgeId: id,
-            error: error.message,
-            adminId: req.user?.id,
-          });
-          throw new Error(error.message);
-        }
-
-        // Delete from vector database
-        try {
-          await deleteKnowledgeVector(id);
-        } catch (vectorError) {
-          logger.warn("Admin force delete: Vector deletion failed", {
-            knowledgeId: id,
-            error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          });
-        }
-
-        logger.warn("Admin: Knowledge force deleted", {
-          knowledgeId: id,
-          title: knowledge.title,
-          agentId: knowledge.agent_id,
-          adminId: req.user?.id,
-          adminEmail: req.user?.email,
-        });
+        // Use service to force delete knowledge
+        await this.knowledgeService.forceDeleteKnowledge(id);
 
         return successResponse(res, null, "Knowledge entry deleted successfully");
       },
@@ -1273,20 +585,20 @@ export class KnowledgeController {
 // Create and export controller instance
 export const knowledgeController = new KnowledgeController();
 
-// Export individual methods for backward compatibility
-export const {
-  createKnowledge,
-  getUserKnowledge,
-  getKnowledgeById,
-  deleteKnowledge,
-  updateKnowledge,
-  batchUploadKnowledge,
-  searchKnowledgeBase,
-  uploadFile,
-  uploadMultipleFiles,
-  getAllKnowledge,
-  getKnowledgeStats,
-  forceDeleteKnowledge,
-} = knowledgeController;
+// Export individual methods for backward compatibility (bound to maintain 'this' context)
+export const createKnowledge = knowledgeController.createKnowledge.bind(knowledgeController);
+export const getUserKnowledge = knowledgeController.getUserKnowledge.bind(knowledgeController);
+export const getKnowledgeById = knowledgeController.getKnowledgeById.bind(knowledgeController);
+export const deleteKnowledge = knowledgeController.deleteKnowledge.bind(knowledgeController);
+export const updateKnowledge = knowledgeController.updateKnowledge.bind(knowledgeController);
+export const searchKnowledgeBase =
+  knowledgeController.searchKnowledgeBase.bind(knowledgeController);
+export const uploadFile = knowledgeController.uploadFile.bind(knowledgeController);
+export const uploadMultipleFiles =
+  knowledgeController.uploadMultipleFiles.bind(knowledgeController);
+export const getAllKnowledge = knowledgeController.getAllKnowledge.bind(knowledgeController);
+export const getKnowledgeStats = knowledgeController.getKnowledgeStats.bind(knowledgeController);
+export const forceDeleteKnowledge =
+  knowledgeController.forceDeleteKnowledge.bind(knowledgeController);
 
 export default knowledgeController;

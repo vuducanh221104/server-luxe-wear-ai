@@ -30,10 +30,10 @@ export class AuthController {
           return errorResponse(res, "Validation failed", 400, errors.array());
         }
 
-        const { email, password, name } = req.body;
+        const { email, password, name, role } = req.body;
 
         // Call service layer
-        const result = await authService.register({ email, password, name });
+        const result = await authService.register({ email, password, name, role });
 
         // Registration successful - return user info and tokens
         return successResponse(

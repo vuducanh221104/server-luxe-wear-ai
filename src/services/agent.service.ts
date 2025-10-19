@@ -236,19 +236,31 @@ export const deleteAgent = async (
 ): Promise<void> => {
   logger.info("Deleting agent", { agentId, userId, tenantId });
 
-  const { error } = await supabaseAdmin
+  const { data: agent, error: agentError } = await supabaseAdmin
     .from("agents")
-    .delete()
+    .select("id")
     .eq("id", agentId)
     .eq("owner_id", userId)
-    .eq("tenant_id", tenantId);
+    .eq("tenant_id", tenantId)
+    .single();
 
-  if (error) {
-    logger.error("Delete agent failed", { agentId, userId, error: error.message });
-    throw new Error(error.message);
+  if (agentError || !agent) {
+    logger.error("Agent not found or access denied", {
+      agentId,
+      userId,
+      error: agentError?.message,
+    });
+    throw new Error("Agent not found or access denied");
   }
 
-  logger.info("Agent deleted successfully", { agentId, userId });
+  const { error: deleteError } = await supabaseAdmin.from("agents").delete().eq("id", agentId);
+
+  if (deleteError) {
+    logger.error("Delete agent failed", { agentId, userId, error: deleteError.message });
+    throw new Error(deleteError.message);
+  }
+
+  logger.info("Agent and related data deleted successfully", { agentId, userId });
 };
 
 /**

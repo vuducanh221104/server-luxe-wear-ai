@@ -5,16 +5,14 @@
 
 import { Request, Response, NextFunction } from "express";
 import { supabaseAdmin } from "../config/supabase";
-import { TenantContext } from "../types/tenant";
+import { TenantContext, TenantPlan, TenantStatus, TenantRole } from "../types/tenant";
 import logger from "../config/logger";
 import { errorResponse } from "../utils/response";
 
 // Extend Request interface to include tenant context
-declare global {
-  namespace Express {
-    interface Request {
-      tenant?: TenantContext;
-    }
+declare module "express-serve-static-core" {
+  interface Request {
+    tenant?: TenantContext;
   }
 }
 
@@ -26,12 +24,11 @@ export const tenantMiddleware = async (
   req: Request,
   res: Response,
   next: NextFunction
-): Promise<void> => {
+): Promise<void | Response> => {
   try {
     // Check if user is authenticated
     if (!req.user?.id) {
-      res.status(401).json(errorResponse(res, "User not authenticated", 401));
-      return;
+      return errorResponse(res, "User not authenticated", 401);
     }
 
     const userId = req.user.id;
@@ -61,44 +58,47 @@ export const tenantMiddleware = async (
         userId,
         error: error.message,
       });
-      res.status(500).json(errorResponse(res, "Failed to fetch tenant information", 500));
-      return;
+      return errorResponse(res, "Failed to fetch tenant information", 500);
     }
 
     if (!userTenants || userTenants.length === 0) {
-      res.status(403).json(errorResponse(res, "User is not a member of any tenant", 403));
-      return;
+      return errorResponse(res, "User is not a member of any tenant", 403);
     }
 
     // For now, use the first tenant (in the future, you might want to support tenant switching)
     const userTenant = userTenants[0];
-    const tenant = userTenant.tenant as any;
+    const tenant = userTenant.tenant as unknown as {
+      id: string;
+      name: string;
+      plan: string;
+      status: string;
+      created_at: string;
+      updated_at: string;
+    };
 
     if (!tenant) {
-      res.status(403).json(errorResponse(res, "Invalid tenant information", 403));
-      return;
+      return errorResponse(res, "Invalid tenant information", 403);
     }
 
     // Check if tenant is active
     if (tenant.status !== "active") {
-      res.status(403).json(errorResponse(res, "Tenant is not active", 403));
-      return;
+      return errorResponse(res, "Tenant is not active", 403);
     }
 
     // Set tenant context
     req.tenant = {
       id: tenant.id,
       name: tenant.name,
-      plan: tenant.plan || "free",
-      status: tenant.status || "active",
-      role: userTenant.role || "member",
+      plan: (tenant.plan || "free") as TenantPlan,
+      status: (tenant.status || "active") as TenantStatus,
+      role: (userTenant.role || "member") as TenantRole,
     };
 
     logger.debug("Tenant context set", {
       userId,
-      tenantId: req.tenant.id,
-      tenantName: req.tenant.name,
-      role: req.tenant.role,
+      tenantId: req.tenant?.id,
+      tenantName: req.tenant?.name,
+      role: req.tenant?.role,
     });
 
     next();
@@ -107,7 +107,7 @@ export const tenantMiddleware = async (
       userId: req.user?.id,
       error: error instanceof Error ? error.message : "Unknown error",
     });
-    res.status(500).json(errorResponse(res, "Internal server error", 500));
+    return errorResponse(res, "Internal server error", 500);
   }
 };
 
@@ -116,23 +116,17 @@ export const tenantMiddleware = async (
  * @param requiredRoles - Array of roles that are allowed
  */
 export const requireTenantRole = (requiredRoles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, res: Response, next: NextFunction): void | Response => {
     if (!req.tenant) {
-      res.status(401).json(errorResponse(res, "Tenant context not found", 401));
-      return;
+      return errorResponse(res, "Tenant context not found", 401);
     }
 
     if (!requiredRoles.includes(req.tenant.role)) {
-      res
-        .status(403)
-        .json(
-          errorResponse(
-            res,
-            `Insufficient permissions. Required roles: ${requiredRoles.join(", ")}`,
-            403
-          )
-        );
-      return;
+      return errorResponse(
+        res,
+        `Insufficient permissions. Required roles: ${requiredRoles.join(", ")}`,
+        403
+      );
     }
 
     next();
@@ -154,10 +148,9 @@ export const requireTenantAdmin = requireTenantRole(["owner", "admin"]);
  * @param requiredPlan - Required tenant plan
  */
 export const requireTenantPlan = (requiredPlan: string) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, res: Response, next: NextFunction): void | Response => {
     if (!req.tenant) {
-      res.status(401).json(errorResponse(res, "Tenant context not found", 401));
-      return;
+      return errorResponse(res, "Tenant context not found", 401);
     }
 
     const planHierarchy = ["free", "pro", "enterprise"];
@@ -165,10 +158,7 @@ export const requireTenantPlan = (requiredPlan: string) => {
     const requiredPlanIndex = planHierarchy.indexOf(requiredPlan);
 
     if (currentPlanIndex < requiredPlanIndex) {
-      res
-        .status(403)
-        .json(errorResponse(res, `This feature requires ${requiredPlan} plan or higher`, 403));
-      return;
+      return errorResponse(res, `This feature requires ${requiredPlan} plan or higher`, 403);
     }
 
     next();
@@ -182,11 +172,10 @@ export const requireTenantPlan = (requiredPlan: string) => {
 export const checkTenantLimits = (
   resourceType: "agents" | "knowledge" | "webhooks" | "analytics"
 ) => {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
     try {
       if (!req.tenant) {
-        res.status(401).json(errorResponse(res, "Tenant context not found", 401));
-        return;
+        return errorResponse(res, "Tenant context not found", 401);
       }
 
       // Get current count for the resource type
@@ -201,8 +190,7 @@ export const checkTenantLimits = (
           resourceType,
           error: error.message,
         });
-        res.status(500).json(errorResponse(res, "Failed to check limits", 500));
-        return;
+        return errorResponse(res, "Failed to check limits", 500);
       }
 
       // Define limits based on plan
@@ -216,12 +204,11 @@ export const checkTenantLimits = (
       const limit = limits[req.tenant.plan as keyof typeof limits]?.[resourceType];
 
       if (limit !== -1 && currentCount >= limit) {
-        res
-          .status(403)
-          .json(
-            errorResponse(res, `${resourceType} limit exceeded for ${req.tenant.plan} plan`, 403)
-          );
-        return;
+        return errorResponse(
+          res,
+          `${resourceType} limit exceeded for ${req.tenant.plan} plan`,
+          403
+        );
       }
 
       next();
@@ -231,7 +218,7 @@ export const checkTenantLimits = (
         resourceType,
         error: error instanceof Error ? error.message : "Unknown error",
       });
-      res.status(500).json(errorResponse(res, "Internal server error", 500));
+      return errorResponse(res, "Internal server error", 500);
     }
   };
 };
