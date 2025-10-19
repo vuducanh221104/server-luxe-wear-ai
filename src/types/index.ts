@@ -20,3 +20,6 @@ export * from "./auth";
 
 // Agent types
 export * from "./agent";
+
+// AI Service types
+export * from "./ai";

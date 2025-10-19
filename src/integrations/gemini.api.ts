@@ -4,7 +4,7 @@
  * Handles advanced API operations, error handling, retry logic, and response formatting
  */
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import logger from "../config/logger";
 import type {
   GeminiConfig,
@@ -21,7 +21,7 @@ import type {
  * Gemini API integration class
  */
 export class GeminiApiIntegration {
-  private genAI: GoogleGenAI;
+  private genAI: GoogleGenerativeAI;
   private config: GeminiConfig;
 
   constructor(config: Partial<GeminiConfig> = {}) {
@@ -34,15 +34,24 @@ export class GeminiApiIntegration {
       apiKey,
       defaultModel: "gemini-2.5-flash",
       embeddingModel: "text-embedding-004",
+      // Model selection strategy
+      models: {
+        // Primary models
+        textGeneration: "gemini-2.5-flash",
+        textGenerationPro: "gemini-2.5-pro",
+        embedding: "text-embedding-004",
+        // Specialized models
+        aqa: "aqa", // For attributed question answering
+        // Fallback models
+        fallback: "gemini-2.0-flash-001",
+      },
       maxRetries: 3,
-      retryDelay: 1000,
-      timeout: 30000,
+      retryDelay: 2000, // Increased delay for quota handling
+      timeout: 30000, // Increased timeout
       ...config,
     };
 
-    this.genAI = new GoogleGenAI({
-      apiKey: this.config.apiKey,
-    });
+    this.genAI = new GoogleGenerativeAI(this.config.apiKey);
 
     logger.info("Gemini API integration initialized", {
       defaultModel: this.config.defaultModel,
@@ -100,9 +109,19 @@ export class GeminiApiIntegration {
           break;
         }
 
-        // Wait before retry (exponential backoff)
+        // Wait before retry (exponential backoff with special handling for quota)
         if (attempt < this.config.maxRetries) {
-          const delay = this.config.retryDelay * Math.pow(2, attempt);
+          let delay = this.config.retryDelay * Math.pow(2, attempt);
+
+          // Special handling for quota errors
+          if (this.isQuotaError(lastError)) {
+            delay = this.extractRetryDelay(lastError);
+            logger.warn(`Quota error detected, waiting ${delay}ms before retry`, {
+              attempt: attempt + 1,
+              error: lastError.message,
+            });
+          }
+
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -130,29 +149,83 @@ export class GeminiApiIntegration {
   private isNonRetryableError(error: Error): boolean {
     const message = error.message.toLowerCase();
 
-    // Don't retry on authentication, quota, or validation errors
+    // Don't retry on authentication or permission errors
+    // But allow retry for quota errors with longer delay
     return (
       message.includes("api key") ||
-      message.includes("quota") ||
       message.includes("invalid") ||
-      message.includes("permission")
+      message.includes("permission") ||
+      message.includes("not found")
     );
   }
 
   /**
-   * Generate text content with advanced error handling
+   * Check if error is quota related and needs special handling
+   */
+  private isQuotaError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return message.includes("quota") || message.includes("rate limit");
+  }
+
+  /**
+   * Extract retry delay from quota error message
+   */
+  private extractRetryDelay(error: Error): number {
+    const message = error.message;
+    const retryMatch = message.match(/retry in (\d+(?:\.\d+)?)s/i);
+    if (retryMatch) {
+      return Math.ceil(parseFloat(retryMatch[1]) * 1000); // Convert to milliseconds
+    }
+    return this.config.retryDelay * 2; // Default longer delay for quota
+  }
+
+  /**
+   * Smart model selection based on use case
+   */
+  private selectModel(useCase: "rag" | "simple" | "complex" | "attributed" = "rag"): string {
+    const models = this.config.models;
+    if (!models) {
+      return this.config.defaultModel; // Fallback to default
+    }
+
+    switch (useCase) {
+      case "rag":
+        return models.textGeneration; // gemini-2.5-flash
+      case "complex":
+        return models.textGenerationPro; // gemini-2.5-pro
+      case "attributed":
+        return models.aqa; // aqa for source attribution
+      case "simple":
+        return models.fallback; // gemini-2.0-flash-001
+      default:
+        return models.textGeneration;
+    }
+  }
+
+  /**
+   * Generate text content with smart model selection
    */
   async generateContent(
     prompt: string,
-    _options: GenerationOptions = {}
+    options: GenerationOptions = {}
   ): Promise<ApiResponse<string>> {
     return this.executeWithRetry(async () => {
-      const result = await this.genAI.models.generateContent({
-        model: this.config.defaultModel,
-        contents: prompt,
+      const model = options.model || this.selectModel(options.useCase);
+
+      // Get the model instance
+      const modelInstance = this.genAI.getGenerativeModel({
+        model: model,
+        generationConfig: {
+          temperature: options.temperature || 0.7,
+          maxOutputTokens: options.maxOutputTokens || 8192,
+          topK: options.topK || 40,
+          topP: options.topP || 0.95,
+        },
       });
 
-      const text = result.text;
+      // Generate content
+      const result = await modelInstance.generateContent(prompt);
+      const text = result.response.text();
 
       if (!text || text.trim().length === 0) {
         throw new Error("Empty response from Gemini API");
@@ -173,28 +246,28 @@ export class GeminiApiIntegration {
       const embeddings: number[][] = [];
 
       // Process in batches to avoid rate limits
-      const batchSize = 10;
+      const batchSize = 5; // Reduced batch size for quota management
       for (let i = 0; i < textArray.length; i += batchSize) {
         const batch = textArray.slice(i, i + batchSize);
 
-        const batchPromises = batch.map(async (text) => {
+        // Sequential processing within each batch to avoid quota issues
+        for (const text of batch) {
           if (!text || text.trim().length === 0) {
             throw new Error("Empty text provided for embedding");
           }
 
-          const result = await this.genAI.models.embedContent({
-            model: this.config.embeddingModel,
-            contents: text,
-          });
-          return result.embeddings?.[0]?.values || [];
-        });
+          const model = this.genAI.getGenerativeModel({ model: this.config.embeddingModel });
+          const result = await model.embedContent(text);
+          const embedding = result.embedding?.values || [];
+          embeddings.push(embedding);
 
-        const batchResults = await Promise.all(batchPromises);
-        embeddings.push(...batchResults);
+          // Small delay between requests to respect rate limits
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
 
-        // Small delay between batches to respect rate limits
+        // Longer delay between batches
         if (i + batchSize < textArray.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
 
@@ -207,10 +280,8 @@ export class GeminiApiIntegration {
    */
   async countTokens(text: string): Promise<ApiResponse<number>> {
     return this.executeWithRetry(async () => {
-      const result = await this.genAI.models.countTokens({
-        model: this.config.defaultModel,
-        contents: text,
-      });
+      const model = this.genAI.getGenerativeModel({ model: this.config.defaultModel });
+      const result = await model.countTokens(text);
       return result.totalTokens || 0;
     }, "countTokens");
   }
@@ -234,30 +305,38 @@ User question: ${userMessage}
 
 Please provide a helpful and accurate response based on the context above.`;
 
-      // Generate response
-      const result = await this.generateContent(prompt, {
-        temperature: options.temperature,
-      });
+      // Parallel: Generate response and count tokens (if metadata needed)
+      const [responseResult, tokenCounts] = await Promise.all([
+        this.generateContent(prompt, {
+          temperature: options.temperature,
+          useCase: "rag", // Use RAG-optimized model
+        }),
+        options.includeMetadata
+          ? Promise.all([
+              this.countTokens(prompt),
+              this.countTokens(userMessage), // Count user message instead of response for better performance
+            ])
+          : Promise.resolve([
+              { success: true, data: 0 },
+              { success: true, data: 0 },
+            ]),
+      ]);
 
-      if (!result.success || !result.data) {
-        throw new Error(result.error || "Failed to generate response");
+      if (!responseResult.success || !responseResult.data) {
+        throw new Error(responseResult.error || "Failed to generate response");
       }
 
       const responseData: RAGResponseData = {
-        response: result.data,
+        response: responseResult.data,
       };
 
       // Add metadata if requested
       if (options.includeMetadata) {
-        const [promptTokens, responseTokens] = await Promise.all([
-          this.countTokens(prompt),
-          this.countTokens(result.data),
-        ]);
-
+        const [promptTokens, userTokens] = tokenCounts;
         responseData.metadata = {
           contextLength: context.length,
           promptTokens: promptTokens.success ? promptTokens.data || 0 : 0,
-          responseTokens: responseTokens.success ? responseTokens.data || 0 : 0,
+          responseTokens: userTokens.success ? userTokens.data || 0 : 0,
         };
       }
 
@@ -271,7 +350,7 @@ Please provide a helpful and accurate response based on the context above.`;
   async healthCheck(): Promise<ApiResponse<HealthCheckData>> {
     return this.executeWithRetry(async () => {
       const testPrompt = "Hello";
-      const result = await this.generateContent(testPrompt);
+      const result = await this.generateContent(testPrompt, { useCase: "simple" });
 
       if (!result.success) {
         throw new Error(result.error || "Health check failed");

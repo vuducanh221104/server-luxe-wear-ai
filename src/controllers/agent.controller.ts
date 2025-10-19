@@ -15,6 +15,7 @@ import { successResponse, errorResponse } from "../utils/response";
 import { chatWithRAG } from "../utils/vectorizer";
 import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
+import { handleAsyncOperationStrict } from "../utils/errorHandler";
 
 /**
  * Agent Controller Class
@@ -31,46 +32,49 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async createAgent(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const { name, description, config } = req.body;
+        const { name, description, config } = req.body;
 
-      const agent = await agentService.createAgent(req.user.id, {
-        name,
-        description,
-        config,
-      });
+        const agent = await agentService.createAgent(req.user.id, {
+          name,
+          description,
+          config,
+        });
 
-      return successResponse(
-        res,
-        {
-          id: agent.id,
-          name: agent.name,
-          description: agent.description,
-          config: agent.config,
-          createdAt: agent.created_at,
-          updatedAt: agent.updated_at,
+        return successResponse(
+          res,
+          {
+            id: agent.id,
+            name: agent.name,
+            description: agent.description,
+            config: agent.config,
+            createdAt: agent.created_at,
+            updatedAt: agent.updated_at,
+          },
+          "Agent created successfully",
+          201
+        );
+      },
+      "create agent",
+      {
+        context: {
+          userId: req.user?.id,
+          agentName: req.body?.name,
+          ip: req.ip,
         },
-        "Agent created successfully",
-        201
-      );
-    } catch (error) {
-      logger.error("Create agent controller error", { error });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to create agent",
-        400
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -79,41 +83,43 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async getAgent(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const { agentId } = req.params;
+        const { agentId } = req.params;
 
-      const agent = await agentService.getAgentById(agentId, req.user.id);
+        const agent = await agentService.getAgentById(agentId, req.user.id);
 
-      return successResponse(
-        res,
-        {
-          id: agent.id,
-          name: agent.name,
-          description: agent.description,
-          config: agent.config,
-          createdAt: agent.created_at,
-          updatedAt: agent.updated_at,
+        return successResponse(
+          res,
+          {
+            id: agent.id,
+            name: agent.name,
+            description: agent.description,
+            config: agent.config,
+            createdAt: agent.created_at,
+            updatedAt: agent.updated_at,
+          },
+          "Agent retrieved successfully"
+        );
+      },
+      "get agent",
+      {
+        context: {
+          userId: req.user?.id,
+          agentId: req.params.agentId,
         },
-        "Agent retrieved successfully"
-      );
-    } catch (error) {
-      logger.error("Get agent controller error", { error });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to get agent",
-        404
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -122,50 +128,53 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async listAgents(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const page = parseInt(req.query.page as string) || 1;
-      const perPage = parseInt(req.query.perPage as string) || 10;
+        const page = parseInt(req.query.page as string) || 1;
+        const perPage = parseInt(req.query.perPage as string) || 10;
 
-      const result = await agentService.listUserAgents(req.user.id, page, perPage);
+        const result = await agentService.listUserAgents(req.user.id, page, perPage);
 
-      return successResponse(
-        res,
-        {
-          agents: result.agents.map((agent) => ({
-            id: agent.id,
-            name: agent.name,
-            description: agent.description,
-            config: agent.config,
-            createdAt: agent.created_at,
-            updatedAt: agent.updated_at,
-          })),
-          pagination: {
-            page: result.page,
-            perPage: result.perPage,
-            total: result.total,
-            totalPages: result.totalPages,
+        return successResponse(
+          res,
+          {
+            agents: result.agents.map((agent) => ({
+              id: agent.id,
+              name: agent.name,
+              description: agent.description,
+              config: agent.config,
+              createdAt: agent.created_at,
+              updatedAt: agent.updated_at,
+            })),
+            pagination: {
+              page: result.page,
+              perPage: result.perPage,
+              total: result.total,
+              totalPages: result.totalPages,
+            },
           },
+          "Agents retrieved successfully"
+        );
+      },
+      "list agents",
+      {
+        context: {
+          userId: req.user?.id,
+          page: req.query.page,
+          perPage: req.query.perPage,
         },
-        "Agents retrieved successfully"
-      );
-    } catch (error) {
-      logger.error("List agents controller error", { error });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to list agents",
-        500
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -174,46 +183,49 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async updateAgent(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const { agentId } = req.params;
-      const { name, description, config } = req.body;
+        const { agentId } = req.params;
+        const { name, description, config } = req.body;
 
-      const agent = await agentService.updateAgent(agentId, req.user.id, {
-        name,
-        description,
-        config,
-      });
+        const agent = await agentService.updateAgent(agentId, req.user.id, {
+          name,
+          description,
+          config,
+        });
 
-      return successResponse(
-        res,
-        {
-          id: agent.id,
-          name: agent.name,
-          description: agent.description,
-          config: agent.config,
-          createdAt: agent.created_at,
-          updatedAt: agent.updated_at,
+        return successResponse(
+          res,
+          {
+            id: agent.id,
+            name: agent.name,
+            description: agent.description,
+            config: agent.config,
+            createdAt: agent.created_at,
+            updatedAt: agent.updated_at,
+          },
+          "Agent updated successfully"
+        );
+      },
+      "update agent",
+      {
+        context: {
+          userId: req.user?.id,
+          agentId: req.params.agentId,
+          updateFields: Object.keys(req.body || {}),
         },
-        "Agent updated successfully"
-      );
-    } catch (error) {
-      logger.error("Update agent controller error", { error });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to update agent",
-        400
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -222,30 +234,32 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async deleteAgent(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        const { agentId } = req.params;
+
+        await agentService.deleteAgent(agentId, req.user.id);
+
+        return successResponse(res, null, "Agent deleted successfully");
+      },
+      "delete agent",
+      {
+        context: {
+          userId: req.user?.id,
+          agentId: req.params.agentId,
+        },
       }
-
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
-
-      const { agentId } = req.params;
-
-      await agentService.deleteAgent(agentId, req.user.id);
-
-      return successResponse(res, null, "Agent deleted successfully");
-    } catch (error) {
-      logger.error("Delete agent controller error", { error });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to delete agent",
-        404
-      );
-    }
+    );
   }
 
   /**
@@ -254,30 +268,32 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async getAgentStats(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        const { agentId } = req.params;
+
+        const stats = await agentService.getAgentStats(agentId, req.user.id);
+
+        return successResponse(res, stats, "Agent statistics retrieved successfully");
+      },
+      "get agent stats",
+      {
+        context: {
+          userId: req.user?.id,
+          agentId: req.params.agentId,
+        },
       }
-
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
-
-      const { agentId } = req.params;
-
-      const stats = await agentService.getAgentStats(agentId, req.user.id);
-
-      return successResponse(res, stats, "Agent statistics retrieved successfully");
-    } catch (error) {
-      logger.error("Get agent stats controller error", { error });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to get agent statistics",
-        404
-      );
-    }
+    );
   }
 
   /**
@@ -286,45 +302,48 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async searchAgents(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const searchTerm = req.query.q as string;
-      const limit = parseInt(req.query.limit as string) || 10;
+        const searchTerm = req.query.q as string;
+        const limit = parseInt(req.query.limit as string) || 10;
 
-      const agents = await agentService.searchAgents(req.user.id, searchTerm, limit);
+        const agents = await agentService.searchAgents(req.user.id, searchTerm, limit);
 
-      return successResponse(
-        res,
-        {
-          agents: agents.map((agent) => ({
-            id: agent.id,
-            name: agent.name,
-            description: agent.description,
-            config: agent.config,
-            createdAt: agent.created_at,
-            updatedAt: agent.updated_at,
-          })),
-          count: agents.length,
+        return successResponse(
+          res,
+          {
+            agents: agents.map((agent) => ({
+              id: agent.id,
+              name: agent.name,
+              description: agent.description,
+              config: agent.config,
+              createdAt: agent.created_at,
+              updatedAt: agent.updated_at,
+            })),
+            count: agents.length,
+          },
+          "Agents search completed"
+        );
+      },
+      "search agents",
+      {
+        context: {
+          userId: req.user?.id,
+          searchTerm: req.query.q,
+          limit: req.query.limit,
         },
-        "Agents search completed"
-      );
-    } catch (error) {
-      logger.error("Search agents controller error", { error });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to search agents",
-        500
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -333,92 +352,89 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async chatWithAgent(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const { agentId } = req.params;
-      const { message, context } = req.body;
+        const { agentId } = req.params;
+        const { message, context } = req.body;
 
-      // Get agent and verify ownership
-      const agent = await agentService.getAgentById(agentId, req.user.id);
+        // Get agent and verify ownership
+        const agent = await agentService.getAgentById(agentId, req.user.id);
 
-      // Get agent configuration
-      const agentConfig = agent.config as Record<string, unknown>;
-      const systemPrompt =
-        (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
+        // Get agent configuration
+        const agentConfig = agent.config as Record<string, unknown>;
+        const systemPrompt =
+          (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
 
-      logger.info("Agent chat request", {
-        agentId,
-        userId: req.user.id,
-        messageLength: message.length,
-        hasContext: !!context,
-      });
-
-      // Use RAG to generate response with agent's knowledge base
-      const response = await chatWithRAG(
-        context ? `${context}\n\nUser: ${message}` : message,
-        req.user.id, // Use user's knowledge base
-        systemPrompt
-      );
-
-      // Log analytics
-      try {
-        await supabaseAdmin.from("analytics").insert({
-          agent_id: agentId,
-          user_id: req.user.id,
-          query: message,
-          response: response,
-          vector_score: null,
-        });
-      } catch (analyticsError) {
-        logger.warn("Failed to log analytics", {
+        logger.info("Agent chat request", {
           agentId,
           userId: req.user.id,
-          error: analyticsError instanceof Error ? analyticsError.message : "Unknown error",
+          messageLength: message.length,
+          hasContext: !!context,
         });
-      }
 
-      logger.info("Agent chat completed", {
-        agentId,
-        userId: req.user.id,
-        responseLength: response.length,
-      });
+        // Use RAG to generate response with agent's knowledge base
+        const response = await chatWithRAG(
+          context ? `${context}\n\nUser: ${message}` : message,
+          req.user.id, // Use user's knowledge base
+          systemPrompt
+        );
 
-      return successResponse(
-        res,
-        {
-          response,
-          agent: {
-            id: agent.id,
-            name: agent.name,
-            description: agent.description,
+        // Log analytics
+        try {
+          await supabaseAdmin.from("analytics").insert({
+            agent_id: agentId,
+            user_id: req.user.id,
+            query: message,
+            response: response,
+            vector_score: null,
+          });
+        } catch (analyticsError) {
+          logger.warn("Failed to log analytics", {
+            agentId,
+            userId: req.user.id,
+            error: analyticsError instanceof Error ? analyticsError.message : "Unknown error",
+          });
+        }
+
+        logger.info("Agent chat completed", {
+          agentId,
+          userId: req.user.id,
+          responseLength: response.length,
+        });
+
+        return successResponse(
+          res,
+          {
+            response,
+            agent: {
+              id: agent.id,
+              name: agent.name,
+              description: agent.description,
+            },
+            timestamp: new Date().toISOString(),
           },
-          timestamp: new Date().toISOString(),
+          "Chat response generated successfully"
+        );
+      },
+      "chat with agent",
+      {
+        context: {
+          userId: req.user?.id,
+          agentId: req.params.agentId,
+          messageLength: req.body?.message?.length,
         },
-        "Chat response generated successfully"
-      );
-    } catch (error) {
-      logger.error("Agent chat error", {
-        agentId: req.params.agentId,
-        userId: req.user?.id,
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to generate response",
-        500
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -427,44 +443,41 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async regenerateAgentApiKey(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const { agentId } = req.params;
+        const { agentId } = req.params;
 
-      const agent = await agentService.regenerateApiKey(agentId, req.user.id);
+        const agent = await agentService.regenerateApiKey(agentId, req.user.id);
 
-      return successResponse(
-        res,
-        {
-          id: agent.id,
-          name: agent.name,
-          apiKey: agent.api_key,
-          updatedAt: agent.updated_at,
+        return successResponse(
+          res,
+          {
+            id: agent.id,
+            name: agent.name,
+            apiKey: agent.api_key,
+            updatedAt: agent.updated_at,
+          },
+          "API key regenerated successfully"
+        );
+      },
+      "regenerate agent API key",
+      {
+        context: {
+          userId: req.user?.id,
+          agentId: req.params.agentId,
         },
-        "API key regenerated successfully"
-      );
-    } catch (error) {
-      logger.error("Regenerate API key error", {
-        agentId: req.params.agentId,
-        userId: req.user?.id,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to regenerate API key",
-        500
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -473,46 +486,44 @@ export class AgentController {
    * @access User (Agent Owner)
    */
   async toggleAgentPublic(req: Request, res: Response): Promise<Response> {
-    try {
-      // Check validation results
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      if (!req.user) {
-        return errorResponse(res, "User not authenticated", 401);
-      }
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
 
-      const { agentId } = req.params;
-      const { isPublic } = req.body;
+        const { agentId } = req.params;
+        const { isPublic } = req.body;
 
-      const agent = await agentService.toggleAgentPublicStatus(agentId, req.user.id, isPublic);
+        const agent = await agentService.toggleAgentPublicStatus(agentId, req.user.id, isPublic);
 
-      return successResponse(
-        res,
-        {
-          id: agent.id,
-          name: agent.name,
-          isPublic: agent.is_public,
-          apiKey: agent.is_public ? agent.api_key : undefined, // Only show API key if public
-          updatedAt: agent.updated_at,
+        return successResponse(
+          res,
+          {
+            id: agent.id,
+            name: agent.name,
+            isPublic: agent.is_public,
+            apiKey: agent.is_public ? agent.api_key : undefined, // Only show API key if public
+            updatedAt: agent.updated_at,
+          },
+          `Agent ${isPublic ? "made public" : "made private"} successfully`
+        );
+      },
+      "toggle agent public status",
+      {
+        context: {
+          userId: req.user?.id,
+          agentId: req.params.agentId,
+          isPublic: req.body?.isPublic,
         },
-        `Agent ${isPublic ? "made public" : "made private"} successfully`
-      );
-    } catch (error) {
-      logger.error("Toggle agent public error", {
-        agentId: req.params.agentId,
-        userId: req.user?.id,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to update agent public status",
-        500
-      );
-    }
+      }
+    );
   }
 
   // ===========================
@@ -525,90 +536,88 @@ export class AgentController {
    * @access Admin
    */
   async listAllAgents(req: Request, res: Response): Promise<Response> {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      const page = parseInt(req.query.page as string) || 1;
-      const perPage = parseInt(req.query.perPage as string) || 10;
-      const offset = (page - 1) * perPage;
+        const page = parseInt(req.query.page as string) || 1;
+        const perPage = parseInt(req.query.perPage as string) || 10;
+        const offset = (page - 1) * perPage;
 
-      // Get total count of all agents
-      const { count, error: countError } = await supabaseAdmin
-        .from("agents")
-        .select("*", { count: "exact", head: true });
+        // Get total count of all agents
+        const { count, error: countError } = await supabaseAdmin
+          .from("agents")
+          .select("*", { count: "exact", head: true });
 
-      if (countError) {
-        logger.error("Count all agents failed", { error: countError.message });
-        throw new Error(countError.message);
-      }
+        if (countError) {
+          throw new Error(countError.message);
+        }
 
-      // Get all agents with pagination (no owner filter)
-      const { data: agents, error } = await supabaseAdmin
-        .from("agents")
-        .select(
-          `
-        *,
-        owner:owner_id (
-          id,
-          email,
-          user_metadata
-        )
-      `
-        )
-        .order("created_at", { ascending: false })
-        .range(offset, offset + perPage - 1);
+        // Get all agents with pagination (no owner filter)
+        const { data: agents, error } = await supabaseAdmin
+          .from("agents")
+          .select(
+            `
+          *,
+          owner:owner_id (
+            id,
+            email,
+            user_metadata
+          )
+        `
+          )
+          .order("created_at", { ascending: false })
+          .range(offset, offset + perPage - 1);
 
-      if (error) {
-        logger.error("List all agents failed", { error: error.message });
-        throw new Error(error.message);
-      }
+        if (error) {
+          throw new Error(error.message);
+        }
 
-      const total = count || 0;
-      const totalPages = Math.ceil(total / perPage);
+        const total = count || 0;
+        const totalPages = Math.ceil(total / perPage);
 
-      logger.info("Admin: All agents listed", {
-        adminId: req.user?.id,
-        total,
-        page,
-        perPage,
-      });
+        logger.info("Admin: All agents listed", {
+          adminId: req.user?.id,
+          total,
+          page,
+          perPage,
+        });
 
-      return successResponse(
-        res,
-        {
-          agents: agents.map((agent) => ({
-            id: agent.id,
-            name: agent.name,
-            description: agent.description,
-            isPublic: agent.is_public,
-            hasApiKey: !!agent.api_key,
-            owner: agent.owner,
-            createdAt: agent.created_at,
-            updatedAt: agent.updated_at,
-          })),
-          pagination: {
-            page,
-            perPage,
-            total,
-            totalPages,
+        return successResponse(
+          res,
+          {
+            agents: agents.map((agent) => ({
+              id: agent.id,
+              name: agent.name,
+              description: agent.description,
+              isPublic: agent.is_public,
+              hasApiKey: !!agent.api_key,
+              owner: agent.owner,
+              createdAt: agent.created_at,
+              updatedAt: agent.updated_at,
+            })),
+            pagination: {
+              page,
+              perPage,
+              total,
+              totalPages,
+            },
           },
+          "All agents retrieved successfully"
+        );
+      },
+      "list all agents (admin)",
+      {
+        context: {
+          adminId: req.user?.id,
+          page: req.query.page,
+          perPage: req.query.perPage,
         },
-        "All agents retrieved successfully"
-      );
-    } catch (error) {
-      logger.error("Admin list all agents error", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        adminId: req.user?.id,
-      });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to list agents",
-        500
-      );
-    }
+      }
+    );
   }
 
   /**
@@ -617,67 +626,67 @@ export class AgentController {
    * @access Admin
    */
   async getSystemAgentStats(req: Request, res: Response): Promise<Response> {
-    try {
-      // Get total agents count
-      const { count: totalAgents } = await supabaseAdmin
-        .from("agents")
-        .select("*", { count: "exact", head: true });
+    return handleAsyncOperationStrict(
+      async () => {
+        // Get total agents count
+        const { count: totalAgents } = await supabaseAdmin
+          .from("agents")
+          .select("*", { count: "exact", head: true });
 
-      // Get public agents count
-      const { count: publicAgents } = await supabaseAdmin
-        .from("agents")
-        .select("*", { count: "exact", head: true })
-        .eq("is_public", true);
+        // Get public agents count
+        const { count: publicAgents } = await supabaseAdmin
+          .from("agents")
+          .select("*", { count: "exact", head: true })
+          .eq("is_public", true);
 
-      // Get total users with agents
-      const { data: usersWithAgents } = await supabaseAdmin
-        .from("agents")
-        .select("owner_id")
-        .not("owner_id", "is", null);
+        // Get total users with agents
+        const { data: usersWithAgents } = await supabaseAdmin
+          .from("agents")
+          .select("owner_id")
+          .not("owner_id", "is", null);
 
-      const uniqueUsers = new Set(usersWithAgents?.map((a) => a.owner_id)).size;
+        const uniqueUsers = new Set(usersWithAgents?.map((a) => a.owner_id)).size;
 
-      // Get total analytics/conversations
-      const { count: totalConversations } = await supabaseAdmin
-        .from("analytics")
-        .select("*", { count: "exact", head: true });
+        // Get total analytics/conversations
+        const { count: totalConversations } = await supabaseAdmin
+          .from("analytics")
+          .select("*", { count: "exact", head: true });
 
-      // Get agents created in last 30 days
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        // Get agents created in last 30 days
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const { count: recentAgents } = await supabaseAdmin
-        .from("agents")
-        .select("*", { count: "exact", head: true })
-        .gte("created_at", thirtyDaysAgo.toISOString());
+        const { count: recentAgents } = await supabaseAdmin
+          .from("agents")
+          .select("*", { count: "exact", head: true })
+          .gte("created_at", thirtyDaysAgo.toISOString());
 
-      logger.info("Admin: System stats retrieved", {
-        adminId: req.user?.id,
-        totalAgents,
-        publicAgents,
-      });
+        logger.info("Admin: System stats retrieved", {
+          adminId: req.user?.id,
+          totalAgents,
+          publicAgents,
+        });
 
-      return successResponse(
-        res,
-        {
-          totalAgents: totalAgents || 0,
-          publicAgents: publicAgents || 0,
-          privateAgents: (totalAgents || 0) - (publicAgents || 0),
-          uniqueUsers,
-          totalConversations: totalConversations || 0,
-          recentAgents: recentAgents || 0,
-          averageAgentsPerUser:
-            uniqueUsers > 0 ? Math.round(((totalAgents || 0) / uniqueUsers) * 100) / 100 : 0,
-        },
-        "System statistics retrieved successfully"
-      );
-    } catch (error) {
-      logger.error("Admin system stats error", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        adminId: req.user?.id,
-      });
-      return errorResponse(res, "Failed to get system statistics", 500);
-    }
+        return successResponse(
+          res,
+          {
+            totalAgents: totalAgents || 0,
+            publicAgents: publicAgents || 0,
+            privateAgents: (totalAgents || 0) - (publicAgents || 0),
+            uniqueUsers,
+            totalConversations: totalConversations || 0,
+            recentAgents: recentAgents || 0,
+            averageAgentsPerUser:
+              uniqueUsers > 0 ? Math.round(((totalAgents || 0) / uniqueUsers) * 100) / 100 : 0,
+          },
+          "System statistics retrieved successfully"
+        );
+      },
+      "get system agent stats (admin)",
+      {
+        context: { adminId: req.user?.id },
+      }
+    );
   }
 
   /**
@@ -686,58 +695,51 @@ export class AgentController {
    * @access Admin
    */
   async forceDeleteAgent(req: Request, res: Response): Promise<Response> {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      const { agentId } = req.params;
+        const { agentId } = req.params;
 
-      // Get agent info before deletion (for logging)
-      const { data: agent } = await supabaseAdmin
-        .from("agents")
-        .select("id, name, owner_id")
-        .eq("id", agentId)
-        .single();
+        // Get agent info before deletion (for logging)
+        const { data: agent } = await supabaseAdmin
+          .from("agents")
+          .select("id, name, owner_id")
+          .eq("id", agentId)
+          .single();
 
-      if (!agent) {
-        return errorResponse(res, "Agent not found", 404);
-      }
+        if (!agent) {
+          return errorResponse(res, "Agent not found", 404);
+        }
 
-      // Force delete (bypass ownership check)
-      const { error } = await supabaseAdmin.from("agents").delete().eq("id", agentId);
+        // Force delete (bypass ownership check)
+        const { error } = await supabaseAdmin.from("agents").delete().eq("id", agentId);
 
-      if (error) {
-        logger.error("Admin force delete failed", {
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        logger.warn("Admin: Agent force deleted", {
           agentId,
-          error: error.message,
+          agentName: agent.name,
+          originalOwner: agent.owner_id,
           adminId: req.user?.id,
+          adminEmail: req.user?.email,
         });
-        throw new Error(error.message);
+
+        return successResponse(res, null, "Agent deleted successfully");
+      },
+      "force delete agent (admin)",
+      {
+        context: {
+          adminId: req.user?.id,
+          agentId: req.params.agentId,
+        },
       }
-
-      logger.warn("Admin: Agent force deleted", {
-        agentId,
-        agentName: agent.name,
-        originalOwner: agent.owner_id,
-        adminId: req.user?.id,
-        adminEmail: req.user?.email,
-      });
-
-      return successResponse(res, null, "Agent deleted successfully");
-    } catch (error) {
-      logger.error("Admin force delete error", {
-        agentId: req.params.agentId,
-        error: error instanceof Error ? error.message : "Unknown error",
-        adminId: req.user?.id,
-      });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to delete agent",
-        500
-      );
-    }
+    );
   }
 
   /**
@@ -746,82 +748,82 @@ export class AgentController {
    * @access Admin
    */
   async getUserAgents(req: Request, res: Response): Promise<Response> {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return errorResponse(res, "Validation failed", 400, errors.array());
-      }
+    return handleAsyncOperationStrict(
+      async () => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
 
-      const { userId } = req.params;
-      const page = parseInt(req.query.page as string) || 1;
-      const perPage = parseInt(req.query.perPage as string) || 10;
-      const offset = (page - 1) * perPage;
+        const { userId } = req.params;
+        const page = parseInt(req.query.page as string) || 1;
+        const perPage = parseInt(req.query.perPage as string) || 10;
+        const offset = (page - 1) * perPage;
 
-      // Get user's agents count
-      const { count, error: countError } = await supabaseAdmin
-        .from("agents")
-        .select("*", { count: "exact", head: true })
-        .eq("owner_id", userId);
+        // Get user's agents count
+        const { count, error: countError } = await supabaseAdmin
+          .from("agents")
+          .select("*", { count: "exact", head: true })
+          .eq("owner_id", userId);
 
-      if (countError) {
-        throw new Error(countError.message);
-      }
+        if (countError) {
+          throw new Error(countError.message);
+        }
 
-      // Get user's agents with pagination
-      const { data: agents, error } = await supabaseAdmin
-        .from("agents")
-        .select("*")
-        .eq("owner_id", userId)
-        .order("created_at", { ascending: false })
-        .range(offset, offset + perPage - 1);
+        // Get user's agents with pagination
+        const { data: agents, error } = await supabaseAdmin
+          .from("agents")
+          .select("*")
+          .eq("owner_id", userId)
+          .order("created_at", { ascending: false })
+          .range(offset, offset + perPage - 1);
 
-      if (error) {
-        throw new Error(error.message);
-      }
+        if (error) {
+          throw new Error(error.message);
+        }
 
-      const total = count || 0;
-      const totalPages = Math.ceil(total / perPage);
+        const total = count || 0;
+        const totalPages = Math.ceil(total / perPage);
 
-      logger.info("Admin: User agents retrieved", {
-        targetUserId: userId,
-        adminId: req.user?.id,
-        total,
-      });
+        logger.info("Admin: User agents retrieved", {
+          targetUserId: userId,
+          adminId: req.user?.id,
+          total,
+        });
 
-      return successResponse(
-        res,
-        {
-          userId,
-          agents: agents.map((agent) => ({
-            id: agent.id,
-            name: agent.name,
-            description: agent.description,
-            isPublic: agent.is_public,
-            hasApiKey: !!agent.api_key,
-            createdAt: agent.created_at,
-            updatedAt: agent.updated_at,
-          })),
-          pagination: {
-            page,
-            perPage,
-            total,
-            totalPages,
+        return successResponse(
+          res,
+          {
+            userId,
+            agents: agents.map((agent) => ({
+              id: agent.id,
+              name: agent.name,
+              description: agent.description,
+              isPublic: agent.is_public,
+              hasApiKey: !!agent.api_key,
+              createdAt: agent.created_at,
+              updatedAt: agent.updated_at,
+            })),
+            pagination: {
+              page,
+              perPage,
+              total,
+              totalPages,
+            },
           },
+          "User agents retrieved successfully"
+        );
+      },
+      "get user agents (admin)",
+      {
+        context: {
+          adminId: req.user?.id,
+          targetUserId: req.params.userId,
+          page: req.query.page,
+          perPage: req.query.perPage,
         },
-        "User agents retrieved successfully"
-      );
-    } catch (error) {
-      logger.error("Admin get user agents error", {
-        targetUserId: req.params.userId,
-        error: error instanceof Error ? error.message : "Unknown error",
-        adminId: req.user?.id,
-      });
-      return errorResponse(
-        res,
-        error instanceof Error ? error.message : "Failed to get user agents",
-        500
-      );
-    }
+      }
+    );
   }
 }
 

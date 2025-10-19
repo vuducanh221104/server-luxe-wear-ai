@@ -5,8 +5,15 @@
  */
 
 import { getPineconeIndex } from "../config/pinecone";
-import { generateEmbedding, generateResponse, countTokens } from "../config/ai";
+import { defaultAIService } from "../config/ai";
 import logger from "../config/logger";
+import {
+  getCachedEmbedding,
+  getCachedSearchResults,
+  getCachedAIResponse,
+  getCachedTokenCount,
+  getCachedContext,
+} from "./cache";
 
 /**
  * Search result from Pinecone
@@ -34,25 +41,54 @@ export const searchKnowledge = async (
   topK: number = 5
 ): Promise<SearchResult[]> => {
   try {
-    // 1. Convert query to vector
-    const queryVector = await generateEmbedding(query);
+    // 1. Convert query to vector (with caching)
+    const queryVector = await getCachedEmbedding(
+      query,
+      defaultAIService.generateEmbedding.bind(defaultAIService)
+    );
 
-    // 2. Search in Pinecone
+    // 2. Search using the vector (with caching)
+    return await getCachedSearchResults(queryVector, userId, topK, searchKnowledgeWithVector);
+  } catch (error) {
+    logger.error("Knowledge search failed", {
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    return [];
+  }
+};
+
+/**
+ * Search knowledge base using pre-computed vector
+ * @param queryVector - Pre-computed query vector
+ * @param userId - Filter by user ID (optional)
+ * @param topK - Number of results to return (default: 5)
+ * @returns Array of relevant knowledge entries
+ */
+export const searchKnowledgeWithVector = async (
+  queryVector: number[],
+  userId?: string,
+  topK: number = 5
+): Promise<SearchResult[]> => {
+  try {
+    // Search in Pinecone
     const index = getPineconeIndex();
     const searchResults = await index.query({
       vector: queryVector,
-      topK,
+      topK: Math.min(topK * 2, 20), // Get more results for better filtering
       includeMetadata: true,
       ...(userId && {
         filter: {
           userId: { $eq: userId },
+          // Add recency filter for better results
+          createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
         },
       }),
     });
 
-    // 3. Filter by similarity score (only relevant results)
+    // Filter by similarity score (only relevant results)
     const relevantResults = searchResults.matches
-      .filter((match) => match.score && match.score > 0.7) // 70% similarity threshold
+      .filter((match) => match.score && match.score > 0.6) // Lower threshold for better recall
+      .slice(0, topK) // Take only top K results
       .map((match) => ({
         id: match.id,
         score: match.score || 0,
@@ -60,7 +96,6 @@ export const searchKnowledge = async (
       }));
 
     logger.info("Knowledge search completed", {
-      query: query.substring(0, 50),
       resultsFound: relevantResults.length,
       topScore: relevantResults[0]?.score || 0,
     });
@@ -89,7 +124,7 @@ export const buildContext = async (
 
   for (const result of searchResults) {
     const content = result.metadata.content;
-    const itemTokens = await countTokens(content);
+    const itemTokens = await defaultAIService.countTokens(content);
 
     // Stop if adding this would exceed limit
     if (tokenCount + itemTokens > maxTokens) {
@@ -105,6 +140,55 @@ export const buildContext = async (
   }
 
   return context.trim();
+};
+
+/**
+ * Optimized context building with parallel token counting
+ * @param searchResults - Results from Pinecone
+ * @param maxTokens - Maximum tokens for context (default: 30000)
+ * @returns Context string
+ */
+export const buildContextOptimized = async (
+  searchResults: SearchResult[],
+  maxTokens: number = 30000
+): Promise<string> => {
+  if (searchResults.length === 0) return "";
+
+  // Use cached context if available
+  return await getCachedContext(searchResults, maxTokens, async (results, maxTokensParam) => {
+    // Pre-sort by score for better context quality
+    const sortedResults = results.sort((a, b) => b.score - a.score);
+
+    // Parallel: Count tokens for all results at once (with caching)
+    const tokenCountPromises = sortedResults.map(async (result) => ({
+      result,
+      tokens: await getCachedTokenCount(
+        result.metadata.content,
+        defaultAIService.countTokens.bind(defaultAIService)
+      ),
+    }));
+
+    const resultsWithTokens = await Promise.all(tokenCountPromises);
+
+    let context = "";
+    let tokenCount = 0;
+
+    for (const { result, tokens } of resultsWithTokens) {
+      // Stop if adding this would exceed limit
+      if (tokenCount + tokens > maxTokensParam) {
+        logger.warn("Context size limit reached", {
+          currentTokens: tokenCount,
+          maxTokens: maxTokensParam,
+        });
+        break;
+      }
+
+      context += `${result.metadata.content}\n\n`;
+      tokenCount += tokens;
+    }
+
+    return context.trim();
+  });
 };
 
 /**
@@ -125,18 +209,44 @@ export const chatWithRAG = async (
       messageLength: userMessage.length,
     });
 
-    // 1. Search relevant knowledge from Pinecone
-    const searchResults = await searchKnowledge(userMessage, userId, 5);
+    // 1. Parallel: Generate embedding and count tokens for context management (with caching)
+    const [queryVector, messageTokens] = await Promise.all([
+      getCachedEmbedding(userMessage, defaultAIService.generateEmbedding.bind(defaultAIService)),
+      getCachedTokenCount(userMessage, defaultAIService.countTokens.bind(defaultAIService)),
+    ]);
 
-    // 2. Build context from search results
-    const context = await buildContext(searchResults);
+    // 2. Search relevant knowledge using the vector (with caching)
+    const searchResults = await getCachedSearchResults(
+      queryVector,
+      userId,
+      5,
+      searchKnowledgeWithVector
+    );
 
-    // 3. Generate AI response with context
-    const response = await generateResponse(userMessage, context, systemPrompt);
+    // 3. Parallel: Build context and prepare for AI generation
+    const [context, contextTokens] = await Promise.all([
+      buildContextOptimized(searchResults, 30000 - messageTokens),
+      searchResults.length > 0
+        ? getCachedTokenCount(
+            searchResults.map((r) => r.metadata.content).join(" "),
+            defaultAIService.countTokens.bind(defaultAIService)
+          )
+        : Promise.resolve(0),
+    ]);
+
+    // 4. Generate AI response with context (with caching)
+    const response = await getCachedAIResponse(
+      userMessage,
+      context,
+      systemPrompt,
+      defaultAIService.generateResponse.bind(defaultAIService)
+    );
 
     logger.info("RAG chat completed", {
       contextUsed: !!context,
       responseLength: response.length,
+      contextTokens,
+      searchResultsCount: searchResults.length,
     });
 
     return response;
@@ -161,7 +271,7 @@ export const storeKnowledge = async (
 ): Promise<void> => {
   try {
     // 1. Generate embedding vector
-    const vector = await generateEmbedding(content);
+    const vector = await defaultAIService.generateEmbedding(content);
 
     // 2. Store in Pinecone
     const index = getPineconeIndex();
@@ -202,12 +312,11 @@ export const batchStoreKnowledge = async (
 ): Promise<void> => {
   try {
     const index = getPineconeIndex();
-    const vectors = [];
 
-    // Generate embeddings for all entries
-    for (const entry of entries) {
-      const vector = await generateEmbedding(entry.content);
-      vectors.push({
+    // Parallel: Generate all embeddings at once
+    const vectorPromises = entries.map(async (entry) => {
+      const vector = await defaultAIService.generateEmbedding(entry.content);
+      return {
         id: entry.id,
         values: vector,
         metadata: {
@@ -215,18 +324,26 @@ export const batchStoreKnowledge = async (
           ...entry.metadata,
           createdAt: new Date().toISOString(),
         },
-      });
-    }
+      };
+    });
 
-    // Batch upsert (max 100 per request)
+    const vectors = await Promise.all(vectorPromises);
+
+    // Parallel: Execute all upserts in batches
     const batchSize = 100;
+    const upsertPromises = [];
+
     for (let i = 0; i < vectors.length; i += batchSize) {
       const batch = vectors.slice(i, i + batchSize);
-      await index.upsert(batch);
+      upsertPromises.push(index.upsert(batch));
     }
+
+    // Wait for all upserts to complete
+    await Promise.all(upsertPromises);
 
     logger.info("Batch knowledge stored", {
       count: entries.length,
+      batches: upsertPromises.length,
     });
   } catch (error) {
     logger.error("Failed to batch store knowledge", {
@@ -254,44 +371,16 @@ export const deleteKnowledge = async (id: string): Promise<void> => {
   }
 };
 
-/**
- * Chunk large text into smaller pieces for better vector search
- * @param text - Text to chunk
- * @param maxLength - Maximum length per chunk (default: 1000)
- * @returns Array of text chunks
- */
-export const chunkText = (text: string, maxLength: number = 1000): string[] => {
-  const sentences = text.split(/[.!?]+\s+/);
-  const chunks: string[] = [];
-  let currentChunk = "";
-
-  for (const sentence of sentences) {
-    const trimmedSentence = sentence.trim();
-    if (!trimmedSentence) continue;
-
-    if ((currentChunk + trimmedSentence).length > maxLength) {
-      if (currentChunk) {
-        chunks.push(currentChunk.trim());
-      }
-      currentChunk = trimmedSentence;
-    } else {
-      currentChunk += (currentChunk ? ". " : "") + trimmedSentence;
-    }
-  }
-
-  if (currentChunk) {
-    chunks.push(currentChunk.trim());
-  }
-
-  return chunks;
-};
+// Re-export chunkTextForVector from fileProcessor for vector search
+export { chunkTextForVector as chunkText } from "./fileProcessor";
 
 export default {
   searchKnowledge,
+  searchKnowledgeWithVector,
   buildContext,
+  buildContextOptimized,
   chatWithRAG,
   storeKnowledge,
   batchStoreKnowledge,
   deleteKnowledge,
-  chunkText,
 };

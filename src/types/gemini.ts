@@ -10,6 +10,13 @@ export interface GeminiConfig {
   apiKey: string;
   defaultModel: string;
   embeddingModel: string;
+  models?: {
+    textGeneration: string;
+    textGenerationPro: string;
+    embedding: string;
+    aqa: string;
+    fallback: string;
+  };
   maxRetries: number;
   retryDelay: number;
   timeout: number;
@@ -43,6 +50,8 @@ export interface GenerationOptions {
   maxOutputTokens?: number;
   topK?: number;
   topP?: number;
+  model?: string;
+  useCase?: "rag" | "simple" | "complex" | "attributed";
 }
 
 /**
