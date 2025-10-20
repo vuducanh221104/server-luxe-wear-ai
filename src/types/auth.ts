@@ -1,9 +1,9 @@
 /**
  * @file auth.ts
- * @description Authentication-related types and interfaces
+ * @description Authentication-related types and interfaces for custom users
  */
 
-import { User, Session } from "@supabase/supabase-js";
+import { User, UserRole } from "../types/user";
 
 /**
  * Registration data interface
@@ -12,7 +12,7 @@ export interface RegisterData {
   email: string;
   password: string;
   name?: string;
-  role?: "authenticated" | "admin";
+  role?: UserRole;
 }
 
 /**
@@ -32,11 +32,10 @@ export type OAuthProvider = "google" | "github" | "facebook" | "twitter";
  * Auth response interface
  */
 export interface AuthResponse {
-  user: User; // Supabase User type
-  session: Session | null; // Supabase Session type (null if email confirmation required)
-  accessToken: string;
-  refreshToken: string;
-  userTenants?: any[]; // User's tenant memberships
+  user: User; // Custom User type
+  token: string; // JWT access token
+  refreshToken: string; // JWT refresh token
+  message: string;
 }
 
 /**
@@ -44,4 +43,29 @@ export interface AuthResponse {
  */
 export interface OAuthUrlResponse {
   url: string;
+}
+
+/**
+ * Password change request interface
+ */
+export interface PasswordChangeRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+/**
+ * Password reset request interface
+ */
+export interface PasswordResetRequest {
+  email: string;
+}
+
+/**
+ * User session interface
+ */
+export interface UserSession {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  metadata: Record<string, unknown>;
 }

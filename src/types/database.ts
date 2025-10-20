@@ -50,6 +50,13 @@ export type Database = {
         };
         Relationships: [
           {
+            foreignKeyName: "agents_owner_id_fkey";
+            columns: ["owner_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
             foreignKeyName: "agents_tenant_id_fkey";
             columns: ["tenant_id"];
             isOneToOne: false;
@@ -102,6 +109,13 @@ export type Database = {
             columns: ["tenant_id"];
             isOneToOne: false;
             referencedRelation: "tenants";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "analytics_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
             referencedColumns: ["id"];
           },
         ];
@@ -181,31 +195,98 @@ export type Database = {
         };
         Relationships: [];
       };
-      user_tenants: {
+      users: {
         Row: {
-          created_at: string | null;
           id: string;
-          role: string | null;
-          tenant_id: string | null;
-          user_id: string | null;
+          email: string;
+          password_hash: string;
+          name: string | null;
+          avatar_url: string | null;
+          phone: string | null;
+          website: string | null;
+          role: string;
+          preferences: Json;
+          is_active: boolean;
+          email_verified: boolean;
+          last_login: string | null;
+          created_at: string;
+          updated_at: string;
         };
         Insert: {
-          created_at?: string | null;
           id?: string;
-          role?: string | null;
-          tenant_id?: string | null;
-          user_id?: string | null;
+          email: string;
+          password_hash: string;
+          name?: string | null;
+          avatar_url?: string | null;
+          phone?: string | null;
+          website?: string | null;
+          role?: string;
+          preferences?: Json;
+          is_active?: boolean;
+          email_verified?: boolean;
+          last_login?: string | null;
+          created_at?: string;
+          updated_at?: string;
         };
         Update: {
-          created_at?: string | null;
           id?: string;
-          role?: string | null;
-          tenant_id?: string | null;
-          user_id?: string | null;
+          email?: string;
+          password_hash?: string;
+          name?: string | null;
+          avatar_url?: string | null;
+          phone?: string | null;
+          website?: string | null;
+          role?: string;
+          preferences?: Json;
+          is_active?: boolean;
+          email_verified?: boolean;
+          last_login?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      user_tenant_memberships: {
+        Row: {
+          id: string;
+          user_id: string;
+          tenant_id: string;
+          role: string;
+          status: string;
+          joined_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          tenant_id: string;
+          role?: string;
+          status?: string;
+          joined_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          tenant_id?: string;
+          role?: string;
+          status?: string;
+          joined_at?: string;
+          created_at?: string;
+          updated_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "user_tenants_tenant_id_fkey";
+            foreignKeyName: "user_tenant_memberships_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_tenant_memberships_tenant_id_fkey";
             columns: ["tenant_id"];
             isOneToOne: false;
             referencedRelation: "tenants";

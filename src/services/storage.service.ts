@@ -24,196 +24,187 @@ export const SUPPORTED_IMAGE_TYPES = {
 export const MAX_AVATAR_SIZE = 5 * 1024 * 1024; // 5MB
 
 /**
- * Upload avatar to Supabase Storage
- * @param file - Multer file object
- * @param userId - User ID
- * @returns Public URL of uploaded avatar
+ * Storage Service Class
+ * Class-based service for storage operations
  */
-export const uploadAvatar = async (file: Express.Multer.File, userId: string): Promise<string> => {
-  try {
-    // Validate file type
-    const supportedTypes = Object.values(SUPPORTED_IMAGE_TYPES);
-    if (!supportedTypes.includes(file.mimetype as (typeof supportedTypes)[number])) {
-      throw new Error(
-        `Unsupported file type: ${file.mimetype}. Supported types: ${supportedTypes.join(", ")}`
-      );
-    }
+export class StorageService {
+  /**
+   * Upload avatar to Supabase Storage
+   * @param file - Multer file object
+   * @param userId - User ID
+   * @returns Public URL of uploaded avatar
+   */
+  async uploadAvatar(file: Express.Multer.File, userId: string): Promise<string> {
+    try {
+      // Validate file type
+      const supportedTypes = Object.values(SUPPORTED_IMAGE_TYPES);
+      if (!supportedTypes.includes(file.mimetype as (typeof supportedTypes)[number])) {
+        throw new Error(
+          `Unsupported file type: ${file.mimetype}. Supported types: ${supportedTypes.join(", ")}`
+        );
+      }
 
-    // Validate file size
-    if (file.size > MAX_AVATAR_SIZE) {
-      throw new Error(`File too large. Maximum size is ${MAX_AVATAR_SIZE / 1024 / 1024}MB`);
-    }
+      // Validate file size
+      if (file.size > MAX_AVATAR_SIZE) {
+        throw new Error(`File too large. Maximum size is ${MAX_AVATAR_SIZE / 1024 / 1024}MB`);
+      }
 
-    // Generate unique filename
-    const fileExtension = file.originalname.split(".").pop() || "jpg";
-    const fileName = `avatar-${userId}-${Date.now()}.${fileExtension}`;
-    // Path INSIDE the bucket (do NOT prefix with bucket name)
-    const filePath = `${userId}/${fileName}`;
+      // Generate unique filename
+      const fileExtension = file.originalname.split(".").pop() || "jpg";
+      const fileName = `avatar-${userId}-${Date.now()}.${fileExtension}`;
+      // Path INSIDE the bucket (do NOT prefix with bucket name)
+      const filePath = `avatars/${fileName}`;
 
-    logger.info("Uploading avatar to Supabase Storage", {
-      userId,
-      fileName,
-      fileSize: file.size,
-      mimeType: file.mimetype,
-      filePath,
-    });
+      logger.info("Uploading avatar", { userId, fileName, fileSize: file.size });
 
-    // Upload file to Supabase Storage using admin client to bypass RLS
-    const { error } = await supabaseAdmin.storage.from("avatars").upload(filePath, file.buffer, {
-      contentType: file.mimetype,
-      cacheControl: "3600",
-      upsert: false, // Don't overwrite existing files
-    });
+      // Upload to Supabase Storage
+      const { error } = await supabaseAdmin.storage
+        .from("user-uploads")
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype,
+          cacheControl: "3600",
+          upsert: false, // Don't overwrite existing files
+        });
 
-    if (error) {
-      logger.error("Avatar upload failed", {
+      if (error) {
+        logger.error("Avatar upload failed", { error: error.message, userId, fileName });
+        throw new Error(`Upload failed: ${error.message}`);
+      }
+
+      // Get public URL
+      const { data: urlData } = supabaseAdmin.storage.from("user-uploads").getPublicUrl(filePath);
+
+      if (!urlData.publicUrl) {
+        throw new Error("Failed to get public URL for uploaded avatar");
+      }
+
+      logger.info("Avatar uploaded successfully", {
         userId,
-        error: error.message,
-        errorName: error.name,
         fileName,
-        filePath,
+        publicUrl: urlData.publicUrl,
       });
-      throw new Error(`Failed to upload avatar: ${error.message}`);
-    }
 
-    // Get public URL using admin client
-    const { data: urlData } = supabaseAdmin.storage.from("avatars").getPublicUrl(filePath);
-
-    if (!urlData.publicUrl) {
-      throw new Error("Failed to get public URL for uploaded avatar");
-    }
-
-    logger.info("Avatar uploaded successfully", {
-      userId,
-      fileName,
-      publicUrl: urlData.publicUrl,
-    });
-
-    return urlData.publicUrl;
-  } catch (error) {
-    logger.error("Avatar upload service error", {
-      userId,
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-    throw error;
-  }
-};
-
-/**
- * Delete avatar from Supabase Storage
- * @param avatarUrl - Public URL of the avatar
- * @param userId - User ID
- */
-export const deleteAvatar = async (avatarUrl: string, userId: string): Promise<void> => {
-  try {
-    // Extract the internal path within the bucket from the public URL
-    // Public URL format: https://<project>.supabase.co/storage/v1/object/public/avatars/<internal-path>
-    const url = new URL(avatarUrl);
-    const marker = "/storage/v1/object/public/avatars/";
-    const markerIndex = url.pathname.indexOf(marker);
-    if (markerIndex === -1) {
-      throw new Error("Invalid avatar URL format");
-    }
-    const filePath = url.pathname.substring(markerIndex + marker.length);
-
-    logger.info("Deleting avatar from Supabase Storage", {
-      userId,
-      filePath,
-    });
-
-    const { error } = await supabaseAdmin.storage.from("avatars").remove([filePath]);
-
-    if (error) {
-      logger.error("Avatar deletion failed", {
+      return urlData.publicUrl;
+    } catch (error) {
+      logger.error("Avatar upload error", {
         userId,
-        error: error.message,
-        filePath,
+        error: error instanceof Error ? error.message : "Unknown error",
+        fileName: file.originalname,
+        fileSize: file.size,
       });
-      throw new Error(`Failed to delete avatar: ${error.message}`);
+      throw error;
     }
-
-    logger.info("Avatar deleted successfully", {
-      userId,
-      filePath,
-    });
-  } catch (error) {
-    logger.error("Avatar deletion service error", {
-      userId,
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-    throw error;
-  }
-};
-
-/**
- * Validate avatar file
- * @param file - Multer file object
- * @returns Validation result
- */
-export const validateAvatarFile = (
-  file: Express.Multer.File
-): { isValid: boolean; error?: string } => {
-  if (!file) {
-    return { isValid: false, error: "No file provided" };
   }
 
-  // Check file type
-  const supportedTypes = Object.values(SUPPORTED_IMAGE_TYPES);
-  if (!supportedTypes.includes(file.mimetype as (typeof supportedTypes)[number])) {
-    return {
-      isValid: false,
-      error: `Unsupported file type: ${file.mimetype}. Supported types: ${supportedTypes.join(", ")}`,
-    };
-  }
+  /**
+   * Delete avatar from Supabase Storage
+   * @param avatarUrl - Avatar URL to delete
+   * @param userId - User ID
+   */
+  async deleteAvatar(avatarUrl: string, userId: string): Promise<void> {
+    try {
+      // Extract file path from URL
+      const url = new URL(avatarUrl);
+      const pathParts = url.pathname.split("/");
+      const bucketIndex = pathParts.findIndex((part) => part === "user-uploads");
 
-  // Check file size
-  if (file.size > MAX_AVATAR_SIZE) {
-    return {
-      isValid: false,
-      error: `File too large. Maximum size is ${MAX_AVATAR_SIZE / 1024 / 1024}MB`,
-    };
-  }
+      if (bucketIndex === -1) {
+        throw new Error("Invalid avatar URL - bucket not found");
+      }
 
-  return { isValid: true };
-};
+      // Reconstruct file path (everything after the bucket name)
+      const filePath = pathParts.slice(bucketIndex + 1).join("/");
 
-/**
- * Test Supabase Storage connection and bucket access
- * @returns Test result
- */
-export const testStorageConnection = async (): Promise<{ success: boolean; error?: string }> => {
-  try {
-    logger.info("Testing Supabase Storage connection...");
+      logger.info("Deleting avatar", { userId, filePath });
 
-    // Test if avatars bucket exists and is accessible using admin client
-    const { data, error } = await supabaseAdmin.storage.from("avatars").list("", {
-      limit: 1,
-    });
+      // Delete from Supabase Storage
+      const { error } = await supabaseAdmin.storage.from("user-uploads").remove([filePath]);
 
-    if (error) {
-      logger.error("Storage connection test failed", {
-        error: error.message,
-        errorName: error.name,
+      if (error) {
+        logger.error("Avatar deletion failed", { error: error.message, userId, filePath });
+        throw new Error(`Deletion failed: ${error.message}`);
+      }
+
+      logger.info("Avatar deleted successfully", { userId, filePath });
+    } catch (error) {
+      logger.error("Avatar deletion error", {
+        userId,
+        avatarUrl,
+        error: error instanceof Error ? error.message : "Unknown error",
       });
+      throw error;
+    }
+  }
+
+  /**
+   * Validate avatar file
+   * @param file - Multer file object
+   * @returns Validation result
+   */
+  validateAvatarFile(file: Express.Multer.File): { valid: boolean; error?: string } {
+    try {
+      // Check if file exists
+      if (!file) {
+        return { valid: false, error: "No file provided" };
+      }
+
+      // Validate file type
+      const supportedTypes = Object.values(SUPPORTED_IMAGE_TYPES);
+      if (!supportedTypes.includes(file.mimetype as (typeof supportedTypes)[number])) {
+        return {
+          valid: false,
+          error: `Unsupported file type: ${file.mimetype}. Supported types: ${supportedTypes.join(", ")}`,
+        };
+      }
+
+      // Validate file size
+      if (file.size > MAX_AVATAR_SIZE) {
+        return {
+          valid: false,
+          error: `File too large. Maximum size is ${MAX_AVATAR_SIZE / 1024 / 1024}MB`,
+        };
+      }
+
+      // Validate file name
+      if (!file.originalname || file.originalname.trim() === "") {
+        return { valid: false, error: "Invalid file name" };
+      }
+
+      return { valid: true };
+    } catch (error) {
       return {
-        success: false,
-        error: `Storage test failed: ${error.message}`,
+        valid: false,
+        error: error instanceof Error ? error.message : "Unknown validation error",
       };
     }
-
-    logger.info("Storage connection test successful", {
-      bucketExists: true,
-      itemCount: data?.length || 0,
-    });
-
-    return { success: true };
-  } catch (error) {
-    logger.error("Storage connection test error", {
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
-    };
   }
-};
+
+  /**
+   * Test storage connection
+   * @returns Connection test result
+   */
+  async testStorageConnection(): Promise<{ success: boolean; error?: string }> {
+    try {
+      logger.info("Testing storage connection");
+
+      // Try to list buckets
+      const { data, error } = await supabaseAdmin.storage.listBuckets();
+
+      if (error) {
+        logger.error("Storage connection test failed", { error: error.message });
+        return { success: false, error: error.message };
+      }
+
+      logger.info("Storage connection test successful", { bucketCount: data?.length || 0 });
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      logger.error("Storage connection test error", { error: errorMessage });
+      return { success: false, error: errorMessage };
+    }
+  }
+}
+
+// Create and export service instance
+export const storageService = new StorageService();
+export default storageService;

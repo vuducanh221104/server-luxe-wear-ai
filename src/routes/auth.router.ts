@@ -43,7 +43,7 @@ router.post("/logout", authMiddleware, authController.logout);
  * Refresh access token using refresh token
  * @access Public
  */
-router.post("/refresh", refreshTokenValidator, authController.refreshAccessToken);
+router.post("/refresh", refreshTokenValidator, authController.refreshToken);
 
 /**
  * POST /api/auth/forgot-password

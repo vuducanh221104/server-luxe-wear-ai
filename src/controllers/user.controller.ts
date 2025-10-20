@@ -1,23 +1,20 @@
 /**
  * @file user.controller.ts
- * @description User controller for profile management
+ * @description User controller for profile management using custom users table
  * Handles HTTP requests for user-related operations
  */
 
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
-import * as userService from "../services/user.service";
-import {
-  uploadAvatar as uploadAvatarToStorage,
-  deleteAvatar as deleteAvatarFromStorage,
-} from "../services/storage.service";
+import { userService } from "../services/user.service";
+import { storageService } from "../services/storage.service";
 import { successResponse, errorResponse } from "../utils/response";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
 import logger from "../config/logger";
 
 /**
  * User Controller Class
- * Object-based controller for user operations
+ * Object-based controller for user operations using custom users table
  */
 export class UserController {
   /**
@@ -38,13 +35,17 @@ export class UserController {
           {
             id: user.id,
             email: user.email,
-            name: user.user_metadata?.name,
-            phone: user.user_metadata?.phone,
-            website: user.user_metadata?.website,
-            avatar_url: user.user_metadata?.avatar_url,
-            provider: user.app_metadata?.provider,
-            createdAt: user.created_at,
-            updatedAt: user.updated_at,
+            name: user.name,
+            phone: user.phone,
+            website: user.website,
+            avatar_url: user.avatar_url,
+            role: user.role,
+            preferences: user.preferences,
+            is_active: user.is_active,
+            email_verified: user.email_verified,
+            last_login: user.last_login,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
           },
           "Profile retrieved successfully"
         );
@@ -75,13 +76,19 @@ export class UserController {
           return errorResponse(res, "User not authenticated", 401);
         }
 
-        const { name, phone, website } = req.body;
-        const updateData: { name?: string; phone?: string; website?: string; avatar_url?: string } =
-          {
-            name,
-            phone,
-            website,
-          };
+        const { name, phone, website, preferences } = req.body;
+        const updateData: {
+          name?: string;
+          phone?: string;
+          website?: string;
+          avatar_url?: string;
+          preferences?: Record<string, unknown>;
+        } = {
+          name,
+          phone,
+          website,
+          preferences,
+        };
 
         // If avatar file is uploaded, upload to Supabase Storage
         if (req.file) {
@@ -93,7 +100,7 @@ export class UserController {
           });
 
           try {
-            const avatar_url = await uploadAvatarToStorage(req.file, req.user.id);
+            const avatar_url = await storageService.uploadAvatar(req.file, req.user.id);
             updateData.avatar_url = avatar_url;
             logger.info("Avatar uploaded during profile update", {
               userId: req.user.id,
@@ -104,12 +111,7 @@ export class UserController {
               userId: req.user.id,
               error: error instanceof Error ? error.message : "Unknown error",
             });
-            return errorResponse(
-              res,
-              "Profile updated but avatar upload failed: " +
-                (error instanceof Error ? error.message : "Unknown error"),
-              400
-            );
+            return errorResponse(res, "Failed to upload avatar. Please try again.", 500);
           }
         } else {
           logger.info("No avatar file in profile update request", {
@@ -126,11 +128,15 @@ export class UserController {
           {
             id: updatedUser.id,
             email: updatedUser.email,
-            name: updatedUser.user_metadata?.name,
-            phone: updatedUser.user_metadata?.phone,
-            website: updatedUser.user_metadata?.website,
-            avatar_url: updatedUser.user_metadata?.avatar_url,
-            updatedAt: updatedUser.updated_at,
+            name: updatedUser.name,
+            phone: updatedUser.phone,
+            website: updatedUser.website,
+            avatar_url: updatedUser.avatar_url,
+            role: updatedUser.role,
+            preferences: updatedUser.preferences,
+            is_active: updatedUser.is_active,
+            email_verified: updatedUser.email_verified,
+            updated_at: updatedUser.updated_at,
           },
           "Profile updated successfully"
         );
@@ -165,14 +171,14 @@ export class UserController {
 
         const { email } = req.body;
 
-        const updatedUser = await userService.updateUserEmail(req.user.id, email);
+        const updatedUser = await userService.updateUser(req.user.id, { email });
 
         return successResponse(
           res,
           {
             id: updatedUser.id,
             email: updatedUser.email,
-            updatedAt: updatedUser.updated_at,
+            updated_at: updatedUser.updated_at,
           },
           "Email updated successfully"
         );
@@ -181,7 +187,53 @@ export class UserController {
       {
         context: {
           userId: req.user?.id,
-          newEmail: req.body?.email,
+        },
+      }
+    );
+  }
+
+  /**
+   * Delete current user avatar
+   * DELETE /api/users/avatar
+   */
+  async deleteAvatar(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        try {
+          // Delete avatar from storage
+          if (req.user.avatar_url) {
+            await storageService.deleteAvatar(req.user.avatar_url, req.user.id);
+          }
+
+          // Update user profile to remove avatar_url
+          const updatedUser = await userService.updateUserProfile(req.user.id, {
+            avatar_url: undefined,
+          });
+
+          return successResponse(
+            res,
+            {
+              id: updatedUser.id,
+              avatar_url: updatedUser.avatar_url,
+            },
+            "Avatar deleted successfully"
+          );
+        } catch (error) {
+          logger.error("Avatar deletion failed", {
+            userId: req.user.id,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+          return errorResponse(res, "Failed to delete avatar", 500);
+        }
+      },
+      "delete user avatar",
+      {
+        context: {
+          userId: req.user?.id,
         },
       }
     );
@@ -191,14 +243,14 @@ export class UserController {
    * Get user statistics
    * GET /api/users/stats
    */
-  async getStats(req: Request, res: Response): Promise<Response> {
+  async getUserStats(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
         if (!req.user) {
           return errorResponse(res, "User not authenticated", 401);
         }
 
-        const stats = await userService.getUserStats(req.user.id, req.tenant?.id);
+        const stats = await userService.getUserStats(req.user.id);
 
         return successResponse(res, stats, "User statistics retrieved successfully");
       },
@@ -212,91 +264,33 @@ export class UserController {
   }
 
   /**
-   * Upload user avatar
-   * POST /api/users/avatar
+   * Get user tenant memberships
+   * GET /api/users/memberships
    */
-  async uploadAvatar(req: Request, res: Response): Promise<Response> {
+  async getUserMemberships(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
         if (!req.user) {
           return errorResponse(res, "User not authenticated", 401);
         }
 
-        if (!req.file) {
-          return errorResponse(res, "No avatar file provided", 400);
-        }
-
-        // Upload avatar to Supabase Storage
-        const avatarUrl = await uploadAvatarToStorage(req.file, req.user.id);
-
-        // Update user profile with new avatar URL
-        const updatedUser = await userService.updateUserProfile(req.user.id, {
-          avatar_url: avatarUrl,
-        });
+        const memberships = await userService.getUserMemberships(req.user.id);
 
         return successResponse(
           res,
           {
-            id: updatedUser.id,
-            email: updatedUser.email,
-            name: updatedUser.user_metadata?.name,
-            avatar_url: updatedUser.user_metadata?.avatar_url,
-            updatedAt: updatedUser.updated_at,
+            memberships: memberships.map((membership) => ({
+              id: membership.id,
+              tenant_id: membership.tenant_id,
+              role: membership.role,
+              status: membership.status,
+              joined_at: membership.joined_at,
+            })),
           },
-          "Avatar uploaded successfully"
+          "User memberships retrieved successfully"
         );
       },
-      "upload user avatar",
-      {
-        context: {
-          userId: req.user?.id,
-          fileName: req.file?.originalname,
-          fileSize: req.file?.size,
-        },
-      }
-    );
-  }
-
-  /**
-   * Delete user avatar
-   * DELETE /api/users/avatar
-   */
-  async deleteAvatar(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
-      async () => {
-        if (!req.user) {
-          return errorResponse(res, "User not authenticated", 401);
-        }
-
-        // Get current user to check if they have an avatar
-        const user = await userService.getUserProfile(req.user.id);
-        const currentAvatarUrl = user.user_metadata?.avatar_url;
-
-        if (!currentAvatarUrl) {
-          return errorResponse(res, "No avatar to delete", 400);
-        }
-
-        // Delete avatar from Supabase Storage
-        await deleteAvatarFromStorage(currentAvatarUrl, req.user.id);
-
-        // Update user profile to remove avatar URL
-        const updatedUser = await userService.updateUserProfile(req.user.id, {
-          avatar_url: "",
-        });
-
-        return successResponse(
-          res,
-          {
-            id: updatedUser.id,
-            email: updatedUser.email,
-            name: updatedUser.user_metadata?.name,
-            avatar_url: updatedUser.user_metadata?.avatar_url,
-            updatedAt: updatedUser.updated_at,
-          },
-          "Avatar deleted successfully"
-        );
-      },
-      "delete user avatar",
+      "get user memberships",
       {
         context: {
           userId: req.user?.id,
@@ -305,110 +299,97 @@ export class UserController {
     );
   }
 
-  // ===========================
-  // Admin Operations
-  // ===========================
-
   /**
-   * List all users (Admin only)
+   * List all users (admin only)
    * GET /api/users
    */
   async listUsers(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
-        // Check validation results
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        // Check if user has admin privileges
+        if (!["admin", "owner", "super_admin"].includes(req.user.role)) {
+          return errorResponse(res, "Admin access required", 403);
         }
 
         const page = parseInt(req.query.page as string) || 1;
         const perPage = parseInt(req.query.perPage as string) || 10;
+        const search = req.query.search as string;
 
-        const result = await userService.listUsers(page, perPage);
+        const result = await userService.listUsers(page, perPage, search);
 
-        return successResponse(
-          res,
-          {
-            users: result.users.map((user) => ({
-              id: user.id,
-              email: user.email,
-              name: user.user_metadata?.name,
-              provider: user.app_metadata?.provider,
-              createdAt: user.created_at,
-              updatedAt: user.updated_at,
-              lastSignInAt: user.last_sign_in_at,
-            })),
-            pagination: {
-              page: result.page,
-              perPage: result.perPage,
-              total: result.total,
-              totalPages: result.totalPages,
-            },
-          },
-          "Users retrieved successfully"
-        );
+        return successResponse(res, result, "Users retrieved successfully");
       },
-      "list users (admin)",
+      "list users",
       {
         context: {
-          adminId: req.user?.id,
+          adminUserId: req.user?.id,
           page: req.query.page,
           perPage: req.query.perPage,
+          search: req.query.search,
         },
       }
     );
   }
 
   /**
-   * Get user by ID (Admin only)
-   * GET /api/users/:userId
+   * Get user by ID (admin only)
+   * GET /api/users/:id
    */
   async getUserById(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
-        // Check validation results
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
         }
 
-        const { userId } = req.params;
+        // Check if user has admin privileges
+        if (!["admin", "owner", "super_admin"].includes(req.user.role)) {
+          return errorResponse(res, "Admin access required", 403);
+        }
 
-        const user = await userService.getUserProfile(userId);
+        const { id } = req.params;
+
+        const user = await userService.getUserProfile(id);
 
         return successResponse(
           res,
           {
             id: user.id,
             email: user.email,
-            name: user.user_metadata?.name,
-            phone: user.user_metadata?.phone,
-            website: user.user_metadata?.website,
-            avatar_url: user.user_metadata?.avatar_url,
-            provider: user.app_metadata?.provider,
-            createdAt: user.created_at,
-            updatedAt: user.updated_at,
-            lastSignInAt: user.last_sign_in_at,
+            name: user.name,
+            phone: user.phone,
+            website: user.website,
+            avatar_url: user.avatar_url,
+            role: user.role,
+            preferences: user.preferences,
+            is_active: user.is_active,
+            email_verified: user.email_verified,
+            last_login: user.last_login,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
           },
           "User retrieved successfully"
         );
       },
-      "get user by ID (admin)",
+      "get user by id",
       {
         context: {
-          adminId: req.user?.id,
-          targetUserId: req.params.userId,
+          adminUserId: req.user?.id,
+          targetUserId: req.params.id,
         },
       }
     );
   }
 
   /**
-   * Update user password (Admin only)
-   * PUT /api/users/:userId/password
+   * Update user by ID (admin only)
+   * PUT /api/users/:id
    */
-  async updateUserPassword(req: Request, res: Response): Promise<Response> {
+  async updateUserById(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
         // Check validation results
@@ -417,87 +398,96 @@ export class UserController {
           return errorResponse(res, "Validation failed", 400, errors.array());
         }
 
-        const { userId } = req.params;
-        const { password } = req.body;
-
-        await userService.updateUserPassword(userId, password);
-
-        return successResponse(res, null, "User password updated successfully");
-      },
-      "update user password (admin)",
-      {
-        context: {
-          adminId: req.user?.id,
-          targetUserId: req.params.userId,
-        },
-      }
-    );
-  }
-
-  /**
-   * Ban/Unban user (Admin only)
-   * PUT /api/users/:userId/ban
-   */
-  async banUser(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
-      async () => {
-        // Check validation results
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
         }
 
-        const { userId } = req.params;
-        const { banned } = req.body;
+        // Check if user has admin privileges
+        if (!["admin", "owner", "super_admin"].includes(req.user.role)) {
+          return errorResponse(res, "Admin access required", 403);
+        }
 
-        const updatedUser = await userService.banUser(userId, banned);
+        const { id } = req.params;
+        const { name, phone, website, role, is_active, email_verified, preferences } = req.body;
+
+        const updateData: {
+          name?: string;
+          phone?: string;
+          website?: string;
+          role?: "member" | "admin" | "owner" | "super_admin";
+          is_active?: boolean;
+          email_verified?: boolean;
+          preferences?: Record<string, unknown>;
+        } = {};
+
+        // Only include fields that are provided and allowed
+        if (name !== undefined) updateData.name = name;
+        if (phone !== undefined) updateData.phone = phone;
+        if (website !== undefined) updateData.website = website;
+        if (role !== undefined) updateData.role = role;
+        if (is_active !== undefined) updateData.is_active = is_active;
+        if (email_verified !== undefined) updateData.email_verified = email_verified;
+        if (preferences !== undefined) updateData.preferences = preferences;
+
+        const updatedUser = await userService.updateUser(id, updateData);
 
         return successResponse(
           res,
           {
             id: updatedUser.id,
             email: updatedUser.email,
-            banned: banned,
-            updatedAt: updatedUser.updated_at,
+            name: updatedUser.name,
+            role: updatedUser.role,
+            is_active: updatedUser.is_active,
+            email_verified: updatedUser.email_verified,
+            updated_at: updatedUser.updated_at,
           },
-          `User ${banned ? "banned" : "unbanned"} successfully`
+          "User updated successfully"
         );
       },
-      "ban/unban user (admin)",
+      "update user by id",
       {
         context: {
-          adminId: req.user?.id,
-          targetUserId: req.params.userId,
-          banned: req.body?.banned,
+          adminUserId: req.user?.id,
+          targetUserId: req.params.id,
+          updateFields: Object.keys(req.body || {}),
         },
       }
     );
   }
 
   /**
-   * Delete user (Admin only)
-   * DELETE /api/users/:userId
+   * Delete user by ID (admin only)
+   * DELETE /api/users/:id
    */
-  async deleteUser(req: Request, res: Response): Promise<Response> {
+  async deleteUserById(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
-        // Check validation results
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
         }
 
-        const { userId } = req.params;
+        // Check if user has admin privileges
+        if (!["admin", "owner", "super_admin"].includes(req.user.role)) {
+          return errorResponse(res, "Admin access required", 403);
+        }
 
-        await userService.deleteUser(userId);
+        const { id } = req.params;
 
-        return successResponse(res, null, "User deleted successfully");
+        // Prevent admin from deleting themselves
+        if (id === req.user.id) {
+          return errorResponse(res, "Cannot delete your own account", 400);
+        }
+
+        const result = await userService.deleteUser(id);
+
+        return successResponse(res, result, "User deleted successfully");
       },
-      "delete user (admin)",
+      "delete user by id",
       {
         context: {
-          adminId: req.user?.id,
-          targetUserId: req.params.userId,
+          adminUserId: req.user?.id,
+          targetUserId: req.params.id,
         },
       }
     );
@@ -512,14 +502,13 @@ export const {
   getProfile,
   updateProfile,
   updateEmail,
-  getStats,
-  uploadAvatar,
   deleteAvatar,
+  getUserStats,
+  getUserMemberships,
   listUsers,
   getUserById,
-  updateUserPassword,
-  banUser,
-  deleteUser,
+  updateUserById,
+  deleteUserById,
 } = userController;
 
 export default userController;

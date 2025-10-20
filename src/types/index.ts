@@ -27,5 +27,11 @@ export * from "./ai";
 // Tenant types
 export * from "./tenant";
 
+// Re-export specific types to avoid conflicts
+export type { TenantRole as UserTenantRole } from "./user";
+
 // Knowledge types
 export * from "./knowledge";
+
+// Token types
+export * from "./token";

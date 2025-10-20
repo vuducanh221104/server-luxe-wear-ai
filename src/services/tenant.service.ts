@@ -7,15 +7,14 @@ import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
 import {
   Tenant,
-  UserTenant,
   CreateTenantData,
   UpdateTenantData,
   TenantListResponse,
   TenantStats,
-  UserTenantMembership,
-  TenantRole,
   UserTenantRPCResult,
 } from "../types/tenant";
+import { TenantRole, UserTenantMembership } from "../types/user";
+import { MembershipStatus } from "../types/user";
 
 /**
  * Tenant service class for database operations
@@ -52,11 +51,13 @@ export class TenantService {
       }
 
       // Add owner as tenant member
-      const { error: membershipError } = await supabaseAdmin.from("user_tenants").insert({
-        user_id: ownerId,
-        tenant_id: tenant.id,
-        role: "owner",
-      });
+      const { error: membershipError } = await supabaseAdmin
+        .from("user_tenant_memberships")
+        .insert({
+          user_id: ownerId,
+          tenant_id: tenant.id,
+          role: "owner",
+        });
 
       if (membershipError) {
         // Rollback tenant creation
@@ -162,7 +163,7 @@ export class TenantService {
     try {
       logger.info("Deleting tenant", { tenantId: id });
 
-      // Delete tenant (cascade will handle user_tenants)
+      // Delete tenant (cascade will handle user_tenant_memberships)
       const { error } = await supabaseAdmin.from("tenants").delete().eq("id", id);
 
       if (error) {
@@ -253,7 +254,7 @@ export class TenantService {
             .select("*", { count: "exact", head: true })
             .eq("tenant_id", tenantId),
           supabaseAdmin
-            .from("user_tenants")
+            .from("user_tenant_memberships")
             .select("*", { count: "exact", head: true })
             .eq("tenant_id", tenantId),
         ]);
@@ -299,7 +300,7 @@ export class TenantService {
     tenantId: string,
     userId: string,
     role: string = "member"
-  ): Promise<UserTenant> {
+  ): Promise<UserTenantMembership> {
     try {
       logger.info("Adding user to tenant", {
         tenantId,
@@ -308,7 +309,7 @@ export class TenantService {
       });
 
       const { data: userTenant, error } = await supabaseAdmin
-        .from("user_tenants")
+        .from("user_tenant_memberships")
         .insert({
           user_id: userId,
           tenant_id: tenantId,
@@ -350,7 +351,7 @@ export class TenantService {
       });
 
       const { error } = await supabaseAdmin
-        .from("user_tenants")
+        .from("user_tenant_memberships")
         .delete()
         .eq("tenant_id", tenantId)
         .eq("user_id", userId);
@@ -386,7 +387,7 @@ export class TenantService {
       if (error) {
         // Fallback to direct query if RPC doesn't exist
         const { data: fallbackData, error: fallbackError } = await supabaseAdmin
-          .from("user_tenants")
+          .from("user_tenant_memberships")
           .select(
             `
             id,
@@ -418,15 +419,17 @@ export class TenantService {
 
         // Combine the data
         return (fallbackData || [])
-          .map((ut) => {
-            const tenant = tenants?.find((t) => t.id === ut.tenant_id);
-            return {
-              id: ut.id,
-              tenant: tenant || null,
-              role: ut.role as TenantRole,
-              joinedAt: ut.created_at,
-            };
-          })
+          .map((ut) => ({
+            id: ut.id,
+            user_id: userId, // Use the userId parameter
+            tenant_id: ut.tenant_id,
+            role: ut.role,
+            status: "active" as MembershipStatus, // Default status
+            joined_at: ut.created_at, // Use created_at as joined_at
+            created_at: ut.created_at,
+            updated_at: ut.created_at, // Use created_at as updated_at
+            tenant: tenants?.find((t) => t.id === ut.tenant_id) || null,
+          }))
           .filter((ut) => ut.tenant !== null);
       }
 
@@ -451,7 +454,7 @@ export class TenantService {
   async isUserMemberOfTenant(userId: string, tenantId: string): Promise<boolean> {
     try {
       const { data, error } = await supabaseAdmin
-        .from("user_tenants")
+        .from("user_tenant_memberships")
         .select("id")
         .eq("user_id", userId)
         .eq("tenant_id", tenantId)
@@ -478,13 +481,14 @@ export class TenantService {
   /**
    * Get user's role in tenant
    */
-  async getUserRoleInTenant(userId: string, tenantId: string): Promise<string | null> {
+  async getUserRoleInTenant(userId: string, tenantId: string): Promise<TenantRole | null> {
     try {
       const { data, error } = await supabaseAdmin
-        .from("user_tenants")
+        .from("user_tenant_memberships")
         .select("role")
         .eq("user_id", userId)
         .eq("tenant_id", tenantId)
+        .eq("status", "active")
         .single();
 
       if (error) {
@@ -494,7 +498,7 @@ export class TenantService {
         throw new Error(`Failed to get user role: ${error.message}`);
       }
 
-      return data.role;
+      return (data?.role as TenantRole) || null;
     } catch (error) {
       logger.error("Get user role service error", {
         error: error instanceof Error ? error.message : "Unknown error",
@@ -502,6 +506,80 @@ export class TenantService {
         tenantId,
       });
       return null;
+    }
+  }
+
+  /**
+   * Create a default tenant for new user
+   */
+  async createDefaultTenant(userId: string, userEmail: string): Promise<Tenant> {
+    try {
+      logger.info("Creating default tenant for new user", {
+        userId,
+        userEmail,
+      });
+
+      // Create default tenant
+      const { data: tenant, error: tenantError } = await supabaseAdmin
+        .from("tenants")
+        .insert({
+          name: `${userEmail.split("@")[0]}'s Workspace`,
+          plan: "free",
+          status: "active",
+        })
+        .select()
+        .single();
+
+      if (tenantError) {
+        logger.error("Failed to create default tenant", {
+          error: tenantError.message,
+          userId,
+          userEmail,
+        });
+        throw new Error(`Failed to create default tenant: ${tenantError.message}`);
+      }
+
+      if (!tenant) {
+        throw new Error("No tenant data returned");
+      }
+
+      // Add user as owner of the tenant
+      const { error: membershipError } = await supabaseAdmin
+        .from("user_tenant_memberships")
+        .insert({
+          user_id: userId,
+          tenant_id: tenant.id,
+          role: "owner",
+          status: "active",
+        });
+
+      if (membershipError) {
+        logger.error("Failed to create user-tenant membership", {
+          error: membershipError.message,
+          userId,
+          tenantId: tenant.id,
+        });
+
+        // Clean up the tenant if membership creation failed
+        await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
+
+        throw new Error(`Failed to create user-tenant membership: ${membershipError.message}`);
+      }
+
+      logger.info("Default tenant created successfully", {
+        userId,
+        tenantId: tenant.id,
+        tenantName: tenant.name,
+      });
+
+      return tenant;
+    } catch (error) {
+      logger.error("Create default tenant service error", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        userId,
+        userEmail,
+      });
+      throw error;
     }
   }
 }

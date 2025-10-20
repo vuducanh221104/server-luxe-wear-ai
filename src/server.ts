@@ -21,7 +21,7 @@ import { startJobs, stopJobs } from "./jobs";
 // Services initialization
 import { initializePinecone } from "./config/pinecone";
 import { testSupabaseConnection } from "./config/supabase";
-import { testStorageConnection } from "./services/storage.service";
+import { storageService } from "./services/storage.service";
 
 /**
  * Server port configuration
@@ -50,7 +50,7 @@ const initializeServices = async (): Promise<void> => {
 
     // Test Supabase Storage connection
     logger.info("Testing Supabase Storage connection...");
-    const storageTest = await testStorageConnection();
+    const storageTest = await storageService.testStorageConnection();
     if (!storageTest.success) {
       logger.warn("Supabase Storage test failed", { error: storageTest.error });
       logger.warn(

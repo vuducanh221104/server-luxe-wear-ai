@@ -75,8 +75,8 @@ export const addUserToTenantValidator: ValidationChain[] = [
 
   body("role")
     .optional()
-    .isIn(["admin", "member"])
-    .withMessage("Role must be one of: admin, member"),
+    .isIn(["member", "admin", "owner"])
+    .withMessage("Role must be one of: member, admin, owner"),
 ];
 
 /**
@@ -86,8 +86,8 @@ export const updateUserTenantRoleValidator: ValidationChain[] = [
   body("role")
     .notEmpty()
     .withMessage("Role is required")
-    .isIn(["admin", "member"])
-    .withMessage("Role must be one of: admin, member"),
+    .isIn(["member", "admin", "owner"])
+    .withMessage("Role must be one of: member, admin, owner"),
 ];
 
 /**

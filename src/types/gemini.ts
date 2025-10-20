@@ -102,13 +102,28 @@ export type EmbeddingInput = string | string[];
 export type EmbeddingOutput = number[] | number[][];
 
 /**
+ * Embedding dimension options for Matryoshka scaling
+ */
+export type EmbeddingDimension = 3072 | 1536 | 768 | 512 | 256 | 128;
+
+/**
+ * Embedding configuration with Matryoshka support
+ */
+export interface EmbeddingConfig {
+  model: string;
+  dimension: EmbeddingDimension;
+  useMatryoshka?: boolean;
+}
+
+/**
  * Gemini model types
  */
 export type GeminiModelType =
   | "gemini-1.5-flash"
   | "gemini-1.5-pro"
   | "gemini-pro"
-  | "text-embedding-004";
+  | "text-embedding-004"
+  | "gemini-embedding-001";
 
 /**
  * Error types that should not be retried

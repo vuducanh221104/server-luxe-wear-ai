@@ -35,8 +35,8 @@ export const registerValidator: ValidationChain[] = [
 
   body("role")
     .optional()
-    .isIn(["authenticated", "admin"])
-    .withMessage("Role must be either 'authenticated' or 'admin'"),
+    .isIn(["member", "admin", "owner", "super_admin"])
+    .withMessage("Role must be one of: member, admin, owner, super_admin"),
 ];
 
 /**

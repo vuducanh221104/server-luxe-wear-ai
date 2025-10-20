@@ -31,6 +31,7 @@ export interface AgentConfig {
 export interface CreateAgentData {
   name: string;
   description?: string;
+  systemPrompt?: string;
   config?: AgentConfig;
   isPublic?: boolean;
   allowedOrigins?: string[];
@@ -42,6 +43,7 @@ export interface CreateAgentData {
 export interface UpdateAgentData {
   name?: string;
   description?: string;
+  systemPrompt?: string;
   config?: AgentConfig;
   isPublic?: boolean;
   allowedOrigins?: string[];
@@ -52,19 +54,22 @@ export interface UpdateAgentData {
  */
 export interface AgentListResponse {
   agents: Agent[];
-  total: number;
-  page: number;
-  perPage: number;
-  totalPages: number;
+  pagination: {
+    page: number;
+    perPage: number;
+    totalCount: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
 }
 
 /**
  * Agent statistics interface
  */
 export interface AgentStats {
-  totalQueries: number;
-  totalKnowledge: number;
-  totalWebhooks: number;
-  createdAt: string;
-  lastUsedAt: string | null;
+  knowledgeCount: number;
+  webhookCount: number;
+  totalRequests: number;
+  lastActivity: string;
 }

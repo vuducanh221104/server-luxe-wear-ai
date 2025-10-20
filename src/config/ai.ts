@@ -18,6 +18,7 @@ import {
   clearCacheByPattern,
 } from "../utils/cache";
 import logger from "./logger";
+import type { EmbeddingConfig, EmbeddingDimension } from "../types/gemini";
 
 // Verify API key on startup
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -51,17 +52,30 @@ export class AIService {
   }
 
   /**
-   * Generate text embeddings (vectors) for Pinecone
+   * Generate text embeddings with Matryoshka scaling support
    * @param text - Text to convert to vector
-   * @returns Vector array (768 dimensions for text-embedding-004)
+   * @param dimension - Target dimension (3072, 1536, 768, etc.)
+   * @param useMatryoshka - Whether to use Matryoshka scaling
+   * @returns Vector array with specified dimensions
    */
-  async generateEmbedding(text: string): Promise<number[]> {
+  async generateEmbeddingWithScaling(
+    text: string,
+    dimension: EmbeddingDimension = 1536,
+    useMatryoshka: boolean = true
+  ): Promise<number[]> {
     return handleAsyncOperationStrict(
       async () => {
+        const config: EmbeddingConfig = {
+          model: this.geminiApi.getConfig().embeddingModel,
+          dimension,
+          useMatryoshka,
+        };
+
         if (this.config.enableCaching) {
-          // Use centralized cache utility
-          return await getCachedEmbedding(text, async (text) => {
-            const result = await this.geminiApi.generateEmbeddings(text);
+          // Use centralized cache utility with dimension-specific cache key
+          const cacheKey = `embedding:${dimension}:${text}`;
+          return await getCachedEmbedding(cacheKey, async () => {
+            const result = await this.geminiApi.generateEmbeddingsWithScaling(text, config);
             if (!result.success || !result.data) {
               throw new Error(result.error || "Failed to generate embedding");
             }
@@ -70,17 +84,32 @@ export class AIService {
         }
 
         // Direct call without caching
-        const result = await this.geminiApi.generateEmbeddings(text);
+        const result = await this.geminiApi.generateEmbeddingsWithScaling(text, config);
         if (!result.success || !result.data) {
           throw new Error(result.error || "Failed to generate embedding");
         }
         return result.data as number[];
       },
-      "generate text embedding",
+      "generate text embedding with scaling",
       {
-        context: { textLength: text.length, enableCaching: this.config.enableCaching },
+        context: {
+          textLength: text.length,
+          dimension,
+          useMatryoshka,
+          enableCaching: this.config.enableCaching,
+        },
       }
     );
+  }
+
+  /**
+   * Generate text embeddings (vectors) for Pinecone
+   * @param text - Text to convert to vector
+   * @returns Vector array (1536 dimensions for gemini-embedding-001 with Matryoshka scaling)
+   */
+  async generateEmbedding(text: string): Promise<number[]> {
+    // Use 1536 dimensions by default for optimal cost/performance balance
+    return this.generateEmbeddingWithScaling(text, 1536, true);
   }
 
   /**
@@ -297,9 +326,24 @@ export const defaultAIService = new AIService();
 // ========================================
 
 /**
+ * Generate text embeddings with Matryoshka scaling support
+ * @param text - Text to convert to vector
+ * @param dimension - Target dimension (3072, 1536, 768, etc.)
+ * @param useMatryoshka - Whether to use Matryoshka scaling
+ * @returns Vector array with specified dimensions
+ */
+export const generateEmbeddingWithScaling = async (
+  text: string,
+  dimension: EmbeddingDimension = 1536,
+  useMatryoshka: boolean = true
+): Promise<number[]> => {
+  return await defaultAIService.generateEmbeddingWithScaling(text, dimension, useMatryoshka);
+};
+
+/**
  * Generate text embeddings (vectors) for Pinecone
  * @param text - Text to convert to vector
- * @returns Vector array (768 dimensions for text-embedding-004)
+ * @returns Vector array (1536 dimensions for gemini-embedding-001 with Matryoshka scaling)
  */
 export const generateEmbedding = async (text: string): Promise<number[]> => {
   return await defaultAIService.generateEmbedding(text);
@@ -344,6 +388,7 @@ export default {
 
   // Functional methods (backward compatibility)
   generateEmbedding,
+  generateEmbeddingWithScaling,
   generateResponse,
   countTokens,
 

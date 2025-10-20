@@ -16,6 +16,8 @@ import type {
   HealthCheckData,
   EmbeddingInput,
   EmbeddingOutput,
+  EmbeddingConfig,
+  EmbeddingDimension,
 } from "../types/gemini";
 import type { TenantContext } from "../types/tenant";
 
@@ -35,13 +37,13 @@ export class GeminiApiIntegration {
     this.config = {
       apiKey,
       defaultModel: "gemini-2.5-flash",
-      embeddingModel: "text-embedding-004",
+      embeddingModel: "gemini-embedding-001",
       // Model selection strategy
       models: {
         // Primary models
         textGeneration: "gemini-2.5-flash",
         textGenerationPro: "gemini-2.5-pro",
-        embedding: "text-embedding-004",
+        embedding: "gemini-embedding-001",
         // Specialized models
         aqa: "aqa", // For attributed question answering
         // Fallback models
@@ -246,6 +248,70 @@ export class GeminiApiIntegration {
         return text;
       },
       "generateContent",
+      tenantContext
+    );
+  }
+
+  /**
+   * Generate embeddings with Matryoshka scaling support
+   * @param texts - Text(s) to convert to vectors
+   * @param config - Embedding configuration with dimension control
+   * @param tenantContext - Optional tenant context
+   * @returns Vector array(s) with specified dimensions
+   */
+  async generateEmbeddingsWithScaling(
+    texts: EmbeddingInput,
+    config: EmbeddingConfig,
+    tenantContext?: TenantContext
+  ): Promise<ApiResponse<EmbeddingOutput>> {
+    const textArray = Array.isArray(texts) ? texts : [texts];
+    const isSingle = !Array.isArray(texts);
+
+    return this.executeWithRetry(
+      async () => {
+        const embeddings: number[][] = [];
+
+        // Process in batches to avoid rate limits
+        const batchSize = 5;
+        for (let i = 0; i < textArray.length; i += batchSize) {
+          const batch = textArray.slice(i, i + batchSize);
+
+          // Sequential processing within each batch
+          for (const text of batch) {
+            if (!text || text.trim().length === 0) {
+              throw new Error("Empty text provided for embedding");
+            }
+
+            const model = this.genAI.getGenerativeModel({ model: config.model });
+            const result = await model.embedContent(text);
+            let embedding = result.embedding?.values || [];
+
+            // Apply Matryoshka scaling if requested
+            if (config.useMatryoshka && embedding.length > config.dimension) {
+              const targetDimension: EmbeddingDimension = config.dimension;
+              embedding = embedding.slice(0, targetDimension);
+              logger.debug(`Applied Matryoshka scaling`, {
+                originalLength: result.embedding?.values?.length || 0,
+                targetDimension: targetDimension,
+                finalLength: embedding.length,
+              });
+            }
+
+            embeddings.push(embedding);
+
+            // Small delay between requests
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+
+          // Longer delay between batches
+          if (i + batchSize < textArray.length) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
+
+        return isSingle ? embeddings[0] : embeddings;
+      },
+      "generateEmbeddingsWithScaling",
       tenantContext
     );
   }

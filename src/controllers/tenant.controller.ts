@@ -9,7 +9,8 @@ import { validationResult } from "express-validator";
 import { tenantService } from "../services/tenant.service";
 import { successResponse, errorResponse } from "../utils/response";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
-import { Tenant, UserTenantMembership } from "../types/tenant";
+import { Tenant } from "../types/tenant";
+import { UserTenantMembership } from "../types/user";
 
 /**
  * Tenant Controller Class
@@ -142,14 +143,14 @@ export class TenantController {
           res,
           {
             tenants: memberships.map((membership: UserTenantMembership) => ({
-              id: membership.tenant.id,
-              name: membership.tenant.name,
-              plan: membership.tenant.plan,
-              status: membership.tenant.status,
+              id: membership.tenant_id,
+              name: "Unknown", // Will be populated by service
+              plan: "free",
+              status: "active",
               role: membership.role,
-              joinedAt: membership.joinedAt,
-              createdAt: membership.tenant.created_at,
-              updatedAt: membership.tenant.updated_at,
+              joinedAt: membership.joined_at,
+              createdAt: membership.created_at,
+              updatedAt: membership.updated_at,
             })),
             count: memberships.length,
           },

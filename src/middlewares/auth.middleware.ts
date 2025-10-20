@@ -5,10 +5,10 @@
  */
 
 import { Request, Response, NextFunction } from "express";
-import { verifyToken } from "../services/auth.service";
+import { authService } from "../services/auth.service";
 import { errorResponse } from "../utils/response";
 import logger from "../config/logger";
-import { User } from "@supabase/supabase-js";
+import { User } from "../types/user";
 
 /**
  * Extend Express Request to include user
@@ -54,7 +54,7 @@ export const authMiddleware = async (
     }
 
     // Verify token and get user
-    const user = await verifyToken(token);
+    const user = await authService.verifyToken(token);
 
     // Attach user to request object
     req.user = user;
@@ -92,7 +92,7 @@ export const optionalAuthMiddleware = async (
 
       if (token) {
         try {
-          const user = await verifyToken(token);
+          const user = await authService.verifyToken(token);
           req.user = user;
         } catch (error) {
           // Token is invalid, but we don't block the request

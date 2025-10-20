@@ -10,503 +10,452 @@ import { generateApiKey } from "../utils/apiKey";
 import { Agent, CreateAgentData, UpdateAgentData, AgentListResponse, AgentStats } from "../types";
 
 /**
- * Create a new agent
- * @param userId - Owner user ID
- * @param agentData - Agent data
- * @param tenantId - Tenant ID for multi-tenancy
- * @returns Created agent
+ * Agent Service Class
+ * Class-based service for agent operations
  */
-export const createAgent = async (
-  userId: string,
-  agentData: CreateAgentData,
-  tenantId: string
-): Promise<Agent> => {
-  logger.info("Creating agent", { userId, agentData, tenantId });
+export class AgentService {
+  /**
+   * Create a new agent
+   * @param userId - Owner user ID
+   * @param agentData - Agent data
+   * @param tenantId - Tenant ID for multi-tenancy
+   * @returns Created agent
+   */
+  async createAgent(userId: string, agentData: CreateAgentData, tenantId: string): Promise<Agent> {
+    logger.info("Creating agent", { userId, agentData, tenantId });
 
-  // Check if agent name already exists for this user in this tenant
-  const { data: existingAgent } = await supabaseAdmin
-    .from("agents")
-    .select("id")
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .eq("name", agentData.name)
-    .single();
-
-  if (existingAgent) {
-    throw new Error("Agent name already exists");
-  }
-
-  // Generate API key for the agent
-  const apiKey = generateApiKey();
-
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .insert({
-      name: agentData.name,
-      description: agentData.description,
-      owner_id: userId,
-      tenant_id: tenantId,
-      config: agentData.config || {},
-      api_key: apiKey,
-      is_public: agentData.isPublic || false,
-      allowed_origins: agentData.allowedOrigins || null,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    logger.error("Create agent failed", { userId, error: error.message });
-    throw new Error(error.message);
-  }
-
-  logger.info("Agent created successfully", {
-    userId,
-    tenantId,
-    agentId: data.id,
-    isPublic: data.is_public,
-    hasApiKey: !!data.api_key,
-  });
-  return data;
-};
-
-/**
- * Get agent by ID
- * @param agentId - Agent ID
- * @param userId - Owner user ID (for authorization)
- * @param tenantId - Tenant ID for multi-tenancy
- * @returns Agent data
- */
-export const getAgentById = async (
-  agentId: string,
-  userId: string,
-  tenantId: string
-): Promise<Agent> => {
-  logger.info("Getting agent by ID", { agentId, userId, tenantId });
-
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .select("*")
-    .eq("id", agentId)
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .single();
-
-  if (error) {
-    logger.error("Get agent failed", { agentId, userId, error: error.message });
-    throw new Error(error.code === "PGRST116" ? "Agent not found" : error.message);
-  }
-
-  logger.info("Agent retrieved successfully", { agentId, userId });
-  return data;
-};
-
-/**
- * List user's agents with pagination
- * @param userId - Owner user ID
- * @param tenantId - Tenant ID for multi-tenancy
- * @param page - Page number (1-based)
- * @param perPage - Items per page
- * @returns List of agents with pagination
- */
-export const listUserAgents = async (
-  userId: string,
-  tenantId: string,
-  page: number = 1,
-  perPage: number = 10
-): Promise<AgentListResponse> => {
-  logger.info("Listing user agents", { userId, tenantId, page, perPage });
-
-  const offset = (page - 1) * perPage;
-
-  // Get total count
-  const { count, error: countError } = await supabaseAdmin
-    .from("agents")
-    .select("*", { count: "exact", head: true })
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId);
-
-  if (countError) {
-    logger.error("Count agents failed", { userId, error: countError.message });
-    throw new Error(countError.message);
-  }
-
-  // Get agents with pagination
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .select("*")
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .order("created_at", { ascending: false })
-    .range(offset, offset + perPage - 1);
-
-  if (error) {
-    logger.error("List agents failed", { userId, error: error.message });
-    throw new Error(error.message);
-  }
-
-  const total = count || 0;
-  const totalPages = Math.ceil(total / perPage);
-
-  logger.info("Agents listed successfully", {
-    userId,
-    total,
-    page,
-    perPage,
-    totalPages,
-  });
-
-  return {
-    agents: data,
-    total,
-    page,
-    perPage,
-    totalPages,
-  };
-};
-
-/**
- * Update agent
- * @param agentId - Agent ID
- * @param userId - Owner user ID (for authorization)
- * @param tenantId - Tenant ID for multi-tenancy
- * @param updateData - Data to update
- * @returns Updated agent
- */
-export const updateAgent = async (
-  agentId: string,
-  userId: string,
-  tenantId: string,
-  updateData: UpdateAgentData
-): Promise<Agent> => {
-  logger.info("Updating agent", { agentId, userId, tenantId, updateData });
-
-  // Check if new name already exists (if name is being updated)
-  if (updateData.name) {
+    // Check if agent name already exists for this user in this tenant
     const { data: existingAgent } = await supabaseAdmin
       .from("agents")
       .select("id")
       .eq("owner_id", userId)
       .eq("tenant_id", tenantId)
-      .eq("name", updateData.name)
-      .neq("id", agentId)
+      .eq("name", agentData.name)
       .single();
 
     if (existingAgent) {
       throw new Error("Agent name already exists");
     }
+
+    // Generate API key for the agent
+    const apiKey = generateApiKey();
+
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .insert({
+        name: agentData.name,
+        description: agentData.description,
+        owner_id: userId,
+        tenant_id: tenantId,
+        config: agentData.config || {},
+        api_key: apiKey,
+        system_prompt: agentData.systemPrompt,
+        is_public: agentData.isPublic || false,
+        allowed_origins: agentData.allowedOrigins || [],
+      })
+      .select()
+      .single();
+
+    if (error) {
+      logger.error("Failed to create agent", { error: error.message, userId, agentData });
+      throw new Error(error.message);
+    }
+
+    logger.info("Agent created successfully", { agentId: data.id, userId });
+    return data;
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .update({
-      ...(updateData.name && { name: updateData.name }),
-      ...(updateData.description !== undefined && { description: updateData.description }),
-      ...(updateData.config && { config: updateData.config }),
-      ...(updateData.isPublic !== undefined && { is_public: updateData.isPublic }),
-      ...(updateData.allowedOrigins !== undefined && {
-        allowed_origins: updateData.allowedOrigins,
-      }),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", agentId)
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .select()
-    .single();
+  /**
+   * Get agent by ID
+   * @param agentId - Agent ID
+   * @param userId - User ID (for ownership check)
+   * @param tenantId - Tenant ID
+   * @returns Agent data
+   */
+  async getAgentById(agentId: string, userId: string, tenantId: string): Promise<Agent> {
+    logger.info("Getting agent by ID", { agentId, userId, tenantId });
 
-  if (error) {
-    logger.error("Update agent failed", { agentId, userId, error: error.message });
-    throw new Error(error.code === "PGRST116" ? "Agent not found" : error.message);
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .select("*")
+      .eq("id", agentId)
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (error) {
+      logger.error("Failed to get agent", { error: error.message, agentId });
+      throw new Error("Agent not found");
+    }
+
+    // Check ownership
+    if (data.owner_id !== userId) {
+      logger.warn("User attempted to access agent they don't own", { agentId, userId });
+      throw new Error("Access denied");
+    }
+
+    logger.info("Agent retrieved successfully", { agentId });
+    return data;
   }
 
-  logger.info("Agent updated successfully", { agentId, userId });
-  return data;
-};
+  /**
+   * List user's agents
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @param page - Page number
+   * @param perPage - Items per page
+   * @returns Agent list response
+   */
+  async listUserAgents(
+    userId: string,
+    tenantId: string,
+    page: number = 1,
+    perPage: number = 10
+  ): Promise<AgentListResponse> {
+    logger.info("Listing user agents", { userId, tenantId, page, perPage });
 
-/**
- * Delete agent
- * @param agentId - Agent ID
- * @param userId - Owner user ID (for authorization)
- * @param tenantId - Tenant ID for multi-tenancy
- */
-export const deleteAgent = async (
-  agentId: string,
-  userId: string,
-  tenantId: string
-): Promise<void> => {
-  logger.info("Deleting agent", { agentId, userId, tenantId });
+    const offset = (page - 1) * perPage;
 
-  const { data: agent, error: agentError } = await supabaseAdmin
-    .from("agents")
-    .select("id")
-    .eq("id", agentId)
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .single();
+    const { data, error, count } = await supabaseAdmin
+      .from("agents")
+      .select("*", { count: "exact" })
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + perPage - 1);
 
-  if (agentError || !agent) {
-    logger.error("Agent not found or access denied", {
-      agentId,
+    if (error) {
+      logger.error("Failed to list agents", { error: error.message, userId });
+      throw new Error(error.message);
+    }
+
+    const totalPages = Math.ceil((count || 0) / perPage);
+
+    logger.info("Agents listed successfully", {
       userId,
-      error: agentError?.message,
+      count: data?.length || 0,
+      totalCount: count || 0,
     });
-    throw new Error("Agent not found or access denied");
+
+    return {
+      agents: data || [],
+      pagination: {
+        page,
+        perPage,
+        totalCount: count || 0,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
-  const { error: deleteError } = await supabaseAdmin.from("agents").delete().eq("id", agentId);
+  /**
+   * Update agent
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @param updateData - Update data
+   * @returns Updated agent
+   */
+  async updateAgent(
+    agentId: string,
+    userId: string,
+    tenantId: string,
+    updateData: UpdateAgentData
+  ): Promise<Agent> {
+    logger.info("Updating agent", { agentId, userId, updateData });
 
-  if (deleteError) {
-    logger.error("Delete agent failed", { agentId, userId, error: deleteError.message });
-    throw new Error(deleteError.message);
+    // Check ownership first
+    await this.getAgentById(agentId, userId, tenantId);
+
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .update({
+        name: updateData.name,
+        description: updateData.description,
+        config: updateData.config,
+        system_prompt: updateData.systemPrompt,
+        is_public: updateData.isPublic,
+        allowed_origins: updateData.allowedOrigins,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", agentId)
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId)
+      .select()
+      .single();
+
+    if (error) {
+      logger.error("Failed to update agent", { error: error.message, agentId });
+      throw new Error(error.message);
+    }
+
+    logger.info("Agent updated successfully", { agentId });
+    return data;
   }
 
-  logger.info("Agent and related data deleted successfully", { agentId, userId });
-};
+  /**
+   * Delete agent
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   */
+  async deleteAgent(agentId: string, userId: string, tenantId: string): Promise<void> {
+    logger.info("Deleting agent", { agentId, userId });
 
-/**
- * Get agent statistics
- * @param agentId - Agent ID
- * @param userId - Owner user ID (for authorization)
- * @param tenantId - Tenant ID for multi-tenancy
- * @returns Agent statistics
- */
-export const getAgentStats = async (
-  agentId: string,
-  userId: string,
-  tenantId: string
-): Promise<AgentStats> => {
-  logger.info("Getting agent statistics", { agentId, userId, tenantId });
+    // Check ownership first
+    await this.getAgentById(agentId, userId, tenantId);
 
-  // Verify agent ownership
-  await getAgentById(agentId, userId, tenantId);
+    const { error } = await supabaseAdmin
+      .from("agents")
+      .delete()
+      .eq("id", agentId)
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId);
 
-  // Get queries count
-  const { count: totalQueries, error: queriesError } = await supabaseAdmin
-    .from("analytics")
-    .select("*", { count: "exact", head: true })
-    .eq("agent_id", agentId)
-    .eq("tenant_id", tenantId);
+    if (error) {
+      logger.error("Failed to delete agent", { error: error.message, agentId });
+      throw new Error(error.message);
+    }
 
-  if (queriesError) {
-    logger.warn("Failed to get queries count", { agentId, error: queriesError.message });
+    logger.info("Agent deleted successfully", { agentId });
   }
 
-  // Get knowledge count
-  const { count: totalKnowledge, error: knowledgeError } = await supabaseAdmin
-    .from("knowledge")
-    .select("*", { count: "exact", head: true })
-    .eq("agent_id", agentId)
-    .eq("tenant_id", tenantId);
+  /**
+   * Get agent statistics
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @returns Agent statistics
+   */
+  async getAgentStats(agentId: string, userId: string, tenantId: string): Promise<AgentStats> {
+    logger.info("Getting agent stats", { agentId, userId });
 
-  if (knowledgeError) {
-    logger.warn("Failed to get knowledge count", { agentId, error: knowledgeError.message });
+    // Check ownership first
+    await this.getAgentById(agentId, userId, tenantId);
+
+    // Get knowledge count
+    const { count: knowledgeCount } = await supabaseAdmin
+      .from("knowledge")
+      .select("*", { count: "exact", head: true })
+      .eq("agent_id", agentId);
+
+    // Get webhook count
+    const { count: webhookCount } = await supabaseAdmin
+      .from("webhooks")
+      .select("*", { count: "exact", head: true })
+      .eq("agent_id", agentId);
+
+    logger.info("Agent stats retrieved successfully", { agentId });
+
+    return {
+      knowledgeCount: knowledgeCount || 0,
+      webhookCount: webhookCount || 0,
+      totalRequests: 0, // TODO: Implement request tracking
+      lastActivity: new Date().toISOString(),
+    };
   }
 
-  // Get webhooks count
-  const { count: totalWebhooks, error: webhooksError } = await supabaseAdmin
-    .from("webhooks")
-    .select("*", { count: "exact", head: true })
-    .eq("agent_id", agentId)
-    .eq("tenant_id", tenantId);
+  /**
+   * Search agents
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @param query - Search query
+   * @param page - Page number
+   * @param perPage - Items per page
+   * @returns Search results
+   */
+  async searchAgents(
+    userId: string,
+    tenantId: string,
+    query: string,
+    page: number = 1,
+    perPage: number = 10
+  ): Promise<AgentListResponse> {
+    logger.info("Searching agents", { userId, tenantId, query, page, perPage });
 
-  if (webhooksError) {
-    logger.warn("Failed to get webhooks count", { agentId, error: webhooksError.message });
+    const offset = (page - 1) * perPage;
+
+    const { data, error, count } = await supabaseAdmin
+      .from("agents")
+      .select("*", { count: "exact" })
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId)
+      .or(`name.ilike.%${query}%,description.ilike.%${query}%`)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + perPage - 1);
+
+    if (error) {
+      logger.error("Failed to search agents", { error: error.message, userId, query });
+      throw new Error(error.message);
+    }
+
+    const totalPages = Math.ceil((count || 0) / perPage);
+
+    logger.info("Agent search completed", {
+      userId,
+      query,
+      count: data?.length || 0,
+      totalCount: count || 0,
+    });
+
+    return {
+      agents: data || [],
+      pagination: {
+        page,
+        perPage,
+        totalCount: count || 0,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
-  // Get last used date from analytics
-  const { data: lastQuery } = await supabaseAdmin
-    .from("analytics")
-    .select("created_at")
-    .eq("agent_id", agentId)
-    .eq("tenant_id", tenantId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
+  /**
+   * Get agent by API key
+   * @param apiKey - API key
+   * @returns Agent data
+   */
+  async getAgentByApiKey(apiKey: string): Promise<Agent | null> {
+    logger.info("Getting agent by API key");
 
-  // Get agent creation date
-  const agent = await getAgentById(agentId, userId, tenantId);
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .select("*")
+      .eq("api_key", apiKey)
+      .single();
 
-  const stats = {
-    totalQueries: totalQueries || 0,
-    totalKnowledge: totalKnowledge || 0,
-    totalWebhooks: totalWebhooks || 0,
-    createdAt: agent.created_at!,
-    lastUsedAt: lastQuery?.created_at || null,
-  };
+    if (error) {
+      if (error.code === "PGRST116") {
+        logger.warn("Agent not found for API key");
+        return null;
+      }
+      logger.error("Failed to get agent by API key", { error: error.message });
+      throw new Error(error.message);
+    }
 
-  logger.info("Agent statistics retrieved", { agentId, userId, stats });
-  return stats;
-};
-
-/**
- * Search agents by name
- * @param userId - Owner user ID
- * @param tenantId - Tenant ID for multi-tenancy
- * @param searchTerm - Search term
- * @param limit - Maximum results
- * @returns Matching agents
- */
-export const searchAgents = async (
-  userId: string,
-  tenantId: string,
-  searchTerm: string,
-  limit: number = 10
-): Promise<Agent[]> => {
-  logger.info("Searching agents", { userId, tenantId, searchTerm, limit });
-
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .select("*")
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .or(`name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    logger.error("Search agents failed", { userId, error: error.message });
-    throw new Error(error.message);
+    logger.info("Agent retrieved by API key", { agentId: data.id });
+    return data;
   }
 
-  logger.info("Agents search completed", { userId, searchTerm, count: data.length });
-  return data;
-};
+  /**
+   * Regenerate API key
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @returns Updated agent with new API key
+   */
+  async regenerateApiKey(agentId: string, userId: string, tenantId: string): Promise<Agent> {
+    logger.info("Regenerating API key", { agentId, userId });
 
-/**
- * Get agent by API key (for public access)
- * @param apiKey - Agent API key
- * @returns Agent data if public and valid
- */
-export const getAgentByApiKey = async (apiKey: string): Promise<Agent | null> => {
-  logger.info("Getting agent by API key", { apiKey: apiKey.substring(0, 8) + "..." });
+    // Check ownership first
+    await this.getAgentById(agentId, userId, tenantId);
 
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .select("*")
-    .eq("api_key", apiKey)
-    .eq("is_public", true)
-    .single();
+    const newApiKey = generateApiKey();
 
-  if (error) {
-    logger.debug("Get agent by API key failed", { error: error.message });
-    return null;
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .update({
+        api_key: newApiKey,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", agentId)
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId)
+      .select()
+      .single();
+
+    if (error) {
+      logger.error("Failed to regenerate API key", { error: error.message, agentId });
+      throw new Error(error.message);
+    }
+
+    logger.info("API key regenerated successfully", { agentId });
+    return data;
   }
 
-  logger.info("Agent retrieved by API key", { agentId: data.id });
-  return data;
-};
+  /**
+   * Toggle agent public status
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @param isPublic - Public status
+   * @returns Updated agent
+   */
+  async toggleAgentPublicStatus(
+    agentId: string,
+    userId: string,
+    tenantId: string,
+    isPublic: boolean
+  ): Promise<Agent> {
+    logger.info("Toggling agent public status", { agentId, userId, isPublic });
 
-/**
- * Regenerate API key for an agent
- * @param agentId - Agent ID
- * @param userId - Owner user ID (for authorization)
- * @param tenantId - Tenant ID for multi-tenancy
- * @returns Updated agent with new API key
- */
-export const regenerateApiKey = async (
-  agentId: string,
-  userId: string,
-  tenantId: string
-): Promise<Agent> => {
-  logger.info("Regenerating API key", { agentId, userId, tenantId });
+    // Check ownership first
+    await this.getAgentById(agentId, userId, tenantId);
 
-  // Verify agent ownership
-  await getAgentById(agentId, userId, tenantId);
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .update({
+        is_public: isPublic,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", agentId)
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId)
+      .select()
+      .single();
 
-  // Generate new API key
-  const newApiKey = generateApiKey();
+    if (error) {
+      logger.error("Failed to toggle agent public status", { error: error.message, agentId });
+      throw new Error(error.message);
+    }
 
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .update({
-      api_key: newApiKey,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", agentId)
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .select()
-    .single();
-
-  if (error) {
-    logger.error("Regenerate API key failed", { agentId, userId, error: error.message });
-    throw new Error(error.message);
+    logger.info("Agent public status toggled successfully", { agentId, isPublic });
+    return data;
   }
 
-  logger.info("API key regenerated successfully", { agentId, userId });
-  return data;
-};
+  /**
+   * Update allowed origins
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @param allowedOrigins - Allowed origins array
+   * @returns Updated agent
+   */
+  async updateAllowedOrigins(
+    agentId: string,
+    userId: string,
+    tenantId: string,
+    allowedOrigins: string[]
+  ): Promise<Agent> {
+    logger.info("Updating allowed origins", { agentId, userId, allowedOrigins });
 
-/**
- * Toggle agent public status
- * @param agentId - Agent ID
- * @param userId - Owner user ID (for authorization)
- * @param tenantId - Tenant ID for multi-tenancy
- * @param isPublic - New public status
- * @returns Updated agent
- */
-export const toggleAgentPublicStatus = async (
-  agentId: string,
-  userId: string,
-  tenantId: string,
-  isPublic: boolean
-): Promise<Agent> => {
-  logger.info("Toggling agent public status", { agentId, userId, tenantId, isPublic });
+    // Check ownership first
+    await this.getAgentById(agentId, userId, tenantId);
 
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .update({
-      is_public: isPublic,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", agentId)
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .select()
-    .single();
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .update({
+        allowed_origins: allowedOrigins,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", agentId)
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId)
+      .select()
+      .single();
 
-  if (error) {
-    logger.error("Toggle public status failed", { agentId, userId, error: error.message });
-    throw new Error(error.code === "PGRST116" ? "Agent not found" : error.message);
+    if (error) {
+      logger.error("Failed to update allowed origins", { error: error.message, agentId });
+      throw new Error(error.message);
+    }
+
+    logger.info("Allowed origins updated successfully", { agentId });
+    return data;
   }
+}
 
-  logger.info("Agent public status updated", { agentId, userId, isPublic });
-  return data;
-};
-
-/**
- * Update allowed origins for an agent
- * @param agentId - Agent ID
- * @param userId - Owner user ID (for authorization)
- * @param tenantId - Tenant ID for multi-tenancy
- * @param allowedOrigins - Array of allowed origins
- * @returns Updated agent
- */
-export const updateAllowedOrigins = async (
-  agentId: string,
-  userId: string,
-  tenantId: string,
-  allowedOrigins: string[]
-): Promise<Agent> => {
-  logger.info("Updating allowed origins", { agentId, userId, tenantId, allowedOrigins });
-
-  const { data, error } = await supabaseAdmin
-    .from("agents")
-    .update({
-      allowed_origins: allowedOrigins.length > 0 ? allowedOrigins : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", agentId)
-    .eq("owner_id", userId)
-    .eq("tenant_id", tenantId)
-    .select()
-    .single();
-
-  if (error) {
-    logger.error("Update allowed origins failed", { agentId, userId, error: error.message });
-    throw new Error(error.code === "PGRST116" ? "Agent not found" : error.message);
-  }
-
-  logger.info("Allowed origins updated", { agentId, userId, allowedOrigins });
-  return data;
-};
+// Create and export service instance
+export const agentService = new AgentService();
+export default agentService;

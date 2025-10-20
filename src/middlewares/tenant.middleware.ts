@@ -5,7 +5,8 @@
 
 import { Request, Response, NextFunction } from "express";
 import { supabaseAdmin } from "../config/supabase";
-import { TenantContext, TenantPlan, TenantStatus, TenantRole } from "../types/tenant";
+import { TenantContext, TenantPlan, TenantStatus } from "../types/tenant";
+import { TenantRole } from "../types/user";
 import logger from "../config/logger";
 import { errorResponse } from "../utils/response";
 
@@ -35,11 +36,12 @@ export const tenantMiddleware = async (
 
     // Get user's tenant memberships
     const { data: userTenants, error } = await supabaseAdmin
-      .from("user_tenants")
+      .from("user_tenant_memberships")
       .select(
         `
         id,
         role,
+        status,
         tenant_id,
         tenant:tenants (
           id,
@@ -51,7 +53,8 @@ export const tenantMiddleware = async (
         )
       `
       )
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .eq("status", "active");
 
     if (error) {
       logger.error("Failed to fetch user tenants", {

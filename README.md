@@ -344,8 +344,8 @@ npm run import:knowledge <jsonFile.json> <userId>
 - **Language:** TypeScript
 - **Framework:** Express.js
 - **Database:** Supabase (PostgreSQL)
-- **Vector Database:** Pinecone (768 dimensions)
-- **AI:** Google Gemini (text-embedding-004, gemini-1.5-flash)
+- **Vector Database:** Pinecone (1536 dimensions)
+- **AI:** Google Gemini (gemini-embedding-001, gemini-1.5-flash)
 - **Authentication:** Supabase Auth + JWT
 - **Logger:** Winston
 - **Queue:** Bull (Redis)
@@ -391,9 +391,18 @@ CREATE TABLE knowledge (
 
 ### Vector Storage (Pinecone)
 
-- **Dimensions**: 768 (Google Gemini text-embedding-004)
+- **Dimensions**: 1536 (Google Gemini gemini-embedding-001 with Matryoshka scaling)
+- **Matryoshka Scaling**: Support 1536, 768, 512, 256 dimensions
 - **Index**: luxe-wear-knowledge
 - **Metadata**: userId, title, agentId, fileName, chunkIndex, etc.
+
+### Matryoshka Scaling Benefits
+
+- **Default**: 1536 dimensions for optimal cost/performance balance
+- **Cost Optimization**: 50% cost reduction vs 3072 dimensions
+- **Speed Improvement**: Faster processing than full dimensions
+- **Flexibility**: Choose dimension based on use case
+- **Compatibility**: Maintain compatibility with existing systems
 
 ## ✨ Features
 
@@ -418,6 +427,7 @@ CREATE TABLE knowledge (
 ### AI Integration
 
 - ✅ Google Gemini integration
+- ✅ **Matryoshka scaling support** - Default 1536 dimensions (50% cost reduction)
 - ✅ Vector similarity search
 - ✅ RAG (Retrieval Augmented Generation)
 - ✅ Context-aware responses

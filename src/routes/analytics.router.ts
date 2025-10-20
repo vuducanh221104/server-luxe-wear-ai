@@ -24,6 +24,20 @@ const router = Router();
 router.get("/user", authMiddleware, tenantMiddleware, analyticsController.getUserAnalytics);
 
 /**
+ * GET /api/analytics/tenant
+ * Get tenant analytics
+ * @access User + Tenant Context
+ */
+router.get("/tenant", authMiddleware, tenantMiddleware, analyticsController.getTenantAnalytics);
+
+/**
+ * GET /api/analytics/export
+ * Export analytics data
+ * @access User + Tenant Context
+ */
+router.get("/export", authMiddleware, tenantMiddleware, analyticsController.exportAnalytics);
+
+/**
  * GET /api/analytics/agents/:agentId
  * Get agent analytics
  * @access User (Agent Owner) + Tenant Context
@@ -46,5 +60,12 @@ router.get(
  * @access Admin
  */
 router.get("/system", authMiddleware, adminMiddleware, analyticsController.getSystemAnalytics);
+
+/**
+ * GET /api/analytics/health
+ * Health check for analytics service
+ * @access Public
+ */
+router.get("/health", analyticsController.healthCheck);
 
 export default router;

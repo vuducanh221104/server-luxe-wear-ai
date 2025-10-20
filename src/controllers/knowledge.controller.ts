@@ -12,7 +12,7 @@ import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { successResponse, errorResponse } from "../utils/response";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
-import { KnowledgeService } from "../services/knowledge.service";
+import { knowledgeService } from "../services/knowledge.service";
 import { AdminKnowledgeEntry } from "../types/knowledge";
 import { v4 as uuidv4 } from "uuid";
 
@@ -21,11 +21,6 @@ import { v4 as uuidv4 } from "uuid";
  * Object-based controller for knowledge operations
  */
 export class KnowledgeController {
-  private knowledgeService: KnowledgeService;
-
-  constructor() {
-    this.knowledgeService = new KnowledgeService();
-  }
   // ===========================
   // User Routes (Knowledge Owners)
   // ===========================
@@ -70,7 +65,7 @@ export class KnowledgeController {
         };
 
         // Use service to create knowledge (includes vector storage)
-        const knowledge = await this.knowledgeService.createKnowledge(knowledgeData);
+        const knowledge = await knowledgeService.createKnowledge(knowledgeData);
 
         return successResponse(
           res,
@@ -125,7 +120,7 @@ export class KnowledgeController {
         const agentId = req.query.agentId as string;
 
         // Use service to get user knowledge
-        const result = await this.knowledgeService.getUserKnowledge(req.tenant.id, {
+        const result = await knowledgeService.getUserKnowledge(req.tenant.id, {
           page,
           limit: perPage,
           agentId,
@@ -184,7 +179,7 @@ export class KnowledgeController {
         const { id } = req.params;
 
         // Use service to get knowledge by ID
-        const knowledge = await this.knowledgeService.getKnowledgeById(id, req.tenant.id);
+        const knowledge = await knowledgeService.getKnowledgeById(id, req.tenant.id);
 
         if (!knowledge) {
           return errorResponse(res, "Knowledge entry not found", 404);
@@ -238,7 +233,7 @@ export class KnowledgeController {
         const { id } = req.params;
 
         // Use service to delete knowledge
-        await this.knowledgeService.deleteKnowledge(id, req.tenant.id);
+        await knowledgeService.deleteKnowledge(id, req.tenant.id);
 
         return successResponse(res, null, "Knowledge entry deleted successfully");
       },
@@ -277,7 +272,7 @@ export class KnowledgeController {
         const { title, content, metadata } = req.body;
 
         // Use service to update knowledge
-        const knowledge = await this.knowledgeService.updateKnowledge(
+        const knowledge = await knowledgeService.updateKnowledge(
           id,
           { title, content, metadata },
           req.tenant.id
@@ -332,7 +327,7 @@ export class KnowledgeController {
         const { query, topK = 5, agentId } = req.body;
 
         // Use service to search knowledge
-        const results = await this.knowledgeService.searchKnowledge(
+        const results = await knowledgeService.searchKnowledge(
           query,
           req.user.id,
           req.tenant.id,
@@ -394,7 +389,7 @@ export class KnowledgeController {
         const { agentId, title, chunkSize = 1000, overlap = 100 } = req.body;
 
         // Use service to process file upload
-        const result = await this.knowledgeService.processFileUpload({
+        const result = await knowledgeService.processFileUpload({
           file: req.file,
           agentId,
           title,
@@ -452,7 +447,7 @@ export class KnowledgeController {
         }
 
         // Use service to process multiple files upload
-        const result = await this.knowledgeService.processMultipleFilesUpload({
+        const result = await knowledgeService.processMultipleFilesUpload({
           files,
           agentId,
           chunkSize: parseInt(chunkSize),
@@ -496,7 +491,7 @@ export class KnowledgeController {
         const perPage = Math.min(parseInt(req.query.perPage as string) || 10, 100);
 
         // Use service to get all knowledge
-        const result = await this.knowledgeService.getAllKnowledge({
+        const result = await knowledgeService.getAllKnowledge({
           page,
           limit: perPage,
         });
@@ -538,7 +533,7 @@ export class KnowledgeController {
     return handleAsyncOperationStrict(
       async () => {
         // Use service to get knowledge stats
-        const stats = await this.knowledgeService.getKnowledgeStats();
+        const stats = await knowledgeService.getKnowledgeStats();
 
         return successResponse(res, stats, "Knowledge statistics retrieved successfully");
       },
@@ -567,7 +562,7 @@ export class KnowledgeController {
         const { id } = req.params;
 
         // Use service to force delete knowledge
-        await this.knowledgeService.forceDeleteKnowledge(id);
+        await knowledgeService.forceDeleteKnowledge(id);
 
         return successResponse(res, null, "Knowledge entry deleted successfully");
       },
@@ -585,20 +580,19 @@ export class KnowledgeController {
 // Create and export controller instance
 export const knowledgeController = new KnowledgeController();
 
-// Export individual methods for backward compatibility (bound to maintain 'this' context)
-export const createKnowledge = knowledgeController.createKnowledge.bind(knowledgeController);
-export const getUserKnowledge = knowledgeController.getUserKnowledge.bind(knowledgeController);
-export const getKnowledgeById = knowledgeController.getKnowledgeById.bind(knowledgeController);
-export const deleteKnowledge = knowledgeController.deleteKnowledge.bind(knowledgeController);
-export const updateKnowledge = knowledgeController.updateKnowledge.bind(knowledgeController);
-export const searchKnowledgeBase =
-  knowledgeController.searchKnowledgeBase.bind(knowledgeController);
-export const uploadFile = knowledgeController.uploadFile.bind(knowledgeController);
-export const uploadMultipleFiles =
-  knowledgeController.uploadMultipleFiles.bind(knowledgeController);
-export const getAllKnowledge = knowledgeController.getAllKnowledge.bind(knowledgeController);
-export const getKnowledgeStats = knowledgeController.getKnowledgeStats.bind(knowledgeController);
-export const forceDeleteKnowledge =
-  knowledgeController.forceDeleteKnowledge.bind(knowledgeController);
+// Export individual methods for backward compatibility
+export const {
+  createKnowledge,
+  getUserKnowledge,
+  getKnowledgeById,
+  deleteKnowledge,
+  updateKnowledge,
+  searchKnowledgeBase,
+  uploadFile,
+  uploadMultipleFiles,
+  getAllKnowledge,
+  getKnowledgeStats,
+  forceDeleteKnowledge,
+} = knowledgeController;
 
 export default knowledgeController;

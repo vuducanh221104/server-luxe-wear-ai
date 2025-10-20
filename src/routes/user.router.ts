@@ -67,7 +67,7 @@ router.put(
  * Get current user statistics
  * @access Private
  */
-router.get("/stats", authMiddleware, userController.getStats);
+router.get("/stats", authMiddleware, userController.getUserStats);
 
 /**
  * POST /api/users/avatar
@@ -81,7 +81,7 @@ router.post(
   uploadAvatarMiddleware,
   handleAvatarUploadError,
   validateAvatarExists,
-  userController.uploadAvatar
+  userController.updateProfile
 );
 
 /**
@@ -119,7 +119,7 @@ router.put(
   authMiddleware,
   authRateLimiter,
   [...userIdValidator, ...updatePasswordValidator],
-  userController.updateUserPassword
+  userController.updateProfile
 );
 
 /**
@@ -132,7 +132,7 @@ router.put(
   authMiddleware,
   authRateLimiter,
   banUserValidator,
-  userController.banUser
+  userController.updateUserById
 );
 
 /**
@@ -145,7 +145,7 @@ router.delete(
   authMiddleware,
   authRateLimiter,
   userIdValidator,
-  userController.deleteUser
+  userController.deleteUserById
 );
 
 export default router;

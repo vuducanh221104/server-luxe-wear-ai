@@ -10,7 +10,7 @@
 
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
-import * as agentService from "../services/agent.service";
+import { agentService } from "../services/agent.service";
 import { successResponse, errorResponse } from "../utils/response";
 import { chatWithRAG } from "../utils/vectorizer";
 import { supabaseAdmin } from "../config/supabase";
@@ -174,12 +174,7 @@ export class AgentController {
               createdAt: agent.created_at,
               updatedAt: agent.updated_at,
             })),
-            pagination: {
-              page: result.page,
-              perPage: result.perPage,
-              total: result.total,
-              totalPages: result.totalPages,
-            },
+            pagination: result.pagination,
           },
           "Agents retrieved successfully"
         );
@@ -355,7 +350,7 @@ export class AgentController {
         const searchTerm = req.query.q as string;
         const limit = parseInt(req.query.limit as string) || 10;
 
-        const agents = await agentService.searchAgents(
+        const result = await agentService.searchAgents(
           req.user.id,
           req.tenant.id,
           searchTerm,
@@ -365,7 +360,7 @@ export class AgentController {
         return successResponse(
           res,
           {
-            agents: agents.map((agent) => ({
+            agents: result.agents.map((agent) => ({
               id: agent.id,
               name: agent.name,
               description: agent.description,
@@ -373,9 +368,9 @@ export class AgentController {
               createdAt: agent.created_at,
               updatedAt: agent.updated_at,
             })),
-            count: agents.length,
+            pagination: result.pagination,
           },
-          "Agents search completed"
+          "Agent search completed successfully"
         );
       },
       "search agents",
@@ -633,7 +628,8 @@ export class AgentController {
           owner:owner_id (
             id,
             email,
-            user_metadata
+            name,
+            role
           ),
           tenant:tenant_id (
             id,

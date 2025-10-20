@@ -4,6 +4,7 @@
  */
 
 import { Tables, TablesInsert, TablesUpdate } from "./database";
+import { TenantRole } from "./user";
 
 /**
  * Tenant type from database
@@ -11,13 +12,6 @@ import { Tables, TablesInsert, TablesUpdate } from "./database";
 export type Tenant = Tables<"tenants">;
 export type TenantInsert = TablesInsert<"tenants">;
 export type TenantUpdate = TablesUpdate<"tenants">;
-
-/**
- * User-Tenant mapping type from database
- */
-export type UserTenant = Tables<"user_tenants">;
-export type UserTenantInsert = TablesInsert<"user_tenants">;
-export type UserTenantUpdate = TablesUpdate<"user_tenants">;
 
 /**
  * Tenant plan types
@@ -28,11 +22,6 @@ export type TenantPlan = "free" | "pro" | "enterprise";
  * Tenant status types
  */
 export type TenantStatus = "active" | "inactive" | "suspended";
-
-/**
- * User role in tenant
- */
-export type TenantRole = "owner" | "admin" | "member";
 
 /**
  * Tenant configuration interface
@@ -91,9 +80,9 @@ export interface TenantStats {
 }
 
 /**
- * User tenant membership interface
+ * User tenant membership interface (legacy - use database type instead)
  */
-export interface UserTenantMembership {
+export interface UserTenantMembershipLegacy {
   id: string;
   tenant: Tenant;
   role: TenantRole;
