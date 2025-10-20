@@ -4,7 +4,6 @@
  */
 
 import { Router } from "express";
-import { param } from "express-validator";
 import * as agentController from "../controllers/agent.controller";
 import {
   createAgentValidator,
@@ -14,6 +13,7 @@ import {
   searchValidator,
   chatValidator,
   togglePublicValidator,
+  getUserAgentsValidator,
 } from "../validators/agent.validator";
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { adminMiddleware } from "../middlewares/admin.middleware";
@@ -21,6 +21,58 @@ import { strictRateLimiter } from "../middlewares/rateLimiter.middleware";
 import { tenantMiddleware } from "../middlewares/tenant.middleware";
 
 const router = Router();
+
+// ===========================
+// Admin Routes (System Administration)
+// Note: MUST come BEFORE dynamic routes (/:agentId) to prevent route conflicts
+// ===========================
+
+/**
+ * GET /api/agents/admin/all
+ * List all agents in system with pagination
+ * @access Admin
+ */
+router.get(
+  "/admin/all",
+  authMiddleware,
+  adminMiddleware,
+  paginationValidator,
+  agentController.listAllAgents
+);
+
+/**
+ * GET /api/agents/admin/stats
+ * Get system-wide agent statistics
+ * @access Admin
+ */
+router.get("/admin/stats", authMiddleware, adminMiddleware, agentController.getSystemAgentStats);
+
+/**
+ * GET /api/agents/admin/users/:userId/agents
+ * Get specific user's agents
+ * @access Admin
+ */
+router.get(
+  "/admin/users/:userId/agents",
+  authMiddleware,
+  adminMiddleware,
+  getUserAgentsValidator,
+  agentController.getUserAgents
+);
+
+/**
+ * DELETE /api/agents/admin/:agentId
+ * Force delete any agent (bypass ownership check)
+ * @access Admin
+ */
+router.delete(
+  "/admin/:agentId",
+  authMiddleware,
+  adminMiddleware,
+  strictRateLimiter,
+  agentIdValidator,
+  agentController.forceDeleteAgent
+);
 
 // ===========================
 // User Routes (Agent Owners)
@@ -154,57 +206,6 @@ router.patch(
   strictRateLimiter,
   [...agentIdValidator, ...togglePublicValidator],
   agentController.toggleAgentPublic
-);
-
-// ===========================
-// Admin Routes (System Administration)
-// ===========================
-
-/**
- * GET /api/agents/admin/all
- * List all agents in system with pagination
- * @access Admin
- */
-router.get(
-  "/admin/all",
-  authMiddleware,
-  adminMiddleware,
-  paginationValidator,
-  agentController.listAllAgents
-);
-
-/**
- * GET /api/agents/admin/stats
- * Get system-wide agent statistics
- * @access Admin
- */
-router.get("/admin/stats", authMiddleware, adminMiddleware, agentController.getSystemAgentStats);
-
-/**
- * DELETE /api/agents/admin/:agentId
- * Force delete any agent (bypass ownership check)
- * @access Admin
- */
-router.delete(
-  "/admin/:agentId",
-  authMiddleware,
-  adminMiddleware,
-  strictRateLimiter,
-  agentIdValidator,
-  agentController.forceDeleteAgent
-);
-
-/**
- * GET /api/agents/admin/users/:userId/agents
- * Get specific user's agents
- * @access Admin
- */
-router.get(
-  "/admin/users/:userId/agents",
-  authMiddleware,
-  adminMiddleware,
-  [...paginationValidator, param("userId").isUUID().withMessage("User ID must be a valid UUID")],
-  agentController.getUserAgents
 );
 
 export default router;

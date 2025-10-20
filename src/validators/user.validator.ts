@@ -61,14 +61,14 @@ export const updateEmailValidator: ValidationChain[] = [
  * Validator for updating user password (admin)
  */
 export const updatePasswordValidator: ValidationChain[] = [
-  body("password")
+  body("newPassword")
     .notEmpty()
-    .withMessage("Password is required")
+    .withMessage("New password is required")
     .isLength({ min: 8 })
-    .withMessage("Password must be at least 8 characters")
+    .withMessage("New password must be at least 8 characters")
     .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
     .withMessage(
-      "Password must contain at least one uppercase letter, one lowercase letter, and one number"
+      "New password must contain at least one uppercase letter, one lowercase letter, and one number"
     ),
 ];
 
@@ -94,6 +94,55 @@ export const paginationValidator: ValidationChain[] = [
     .isInt({ min: 1, max: 100 })
     .withMessage("Per page must be between 1 and 100")
     .toInt(),
+];
+
+/**
+ * Validator for updating user by ID (admin)
+ */
+export const updateUserByIdValidator: ValidationChain[] = [
+  ...userIdValidator,
+  body("name")
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Name must be between 2 and 100 characters"),
+
+  body("phone")
+    .optional()
+    .trim()
+    .custom((value) => {
+      if (!value) return true;
+      const phoneRegex = /^[\+]?[1-9][\d]{0,15}$|^[\+]?[1-9][\d\s\-\(\)]{7,20}$/;
+      return phoneRegex.test(value);
+    })
+    .withMessage("Phone number must be valid"),
+
+  body("website")
+    .optional()
+    .trim()
+    .custom((value) => {
+      if (!value) return true;
+      try {
+        new URL(value);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .withMessage("Website must be a valid URL"),
+
+  body("role")
+    .optional()
+    .isIn(["member", "admin", "owner", "super_admin"])
+    .withMessage("Role must be one of: member, admin, owner, super_admin"),
+
+  body("is_active").optional().isBoolean().withMessage("is_active must be boolean").toBoolean(),
+
+  body("email_verified")
+    .optional()
+    .isBoolean()
+    .withMessage("email_verified must be boolean")
+    .toBoolean(),
 ];
 
 /**

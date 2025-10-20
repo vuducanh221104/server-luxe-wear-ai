@@ -44,28 +44,9 @@ export class KnowledgeService {
         throw new Error(`Failed to create knowledge entry: ${error.message}`);
       }
 
-      // 2. Store in vector database (Pinecone)
-      try {
-        const { storeKnowledge } = await import("../utils/vectorizer");
-        await storeKnowledge(knowledge.id, knowledge.content, {
-          userId: knowledge.metadata?.userId || knowledge.metadata?.user_id,
-          tenantId: data.tenant_id,
-          title: knowledge.title,
-          agentId: knowledge.agent_id,
-          ...knowledge.metadata,
-        });
-      } catch (vectorError) {
-        // If vector storage fails, remove from database
-        await supabaseAdmin.from("knowledge").delete().eq("id", knowledge.id);
-        logger.error("Vector storage failed, rolled back database entry", {
-          knowledgeId: knowledge.id,
-          tenantId: data.tenant_id,
-          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          stack: vectorError instanceof Error ? vectorError.stack : undefined,
-        });
-        // Throw the original error to preserve error details
-        throw vectorError;
-      }
+      // Note: Content is stored in Pinecone only via file upload
+      // This method only creates metadata entries without content
+      // Use processFileUpload() to create knowledge with actual content
 
       logger.info("Knowledge entry created successfully", {
         knowledgeId: knowledge.id,
@@ -197,30 +178,12 @@ export class KnowledgeService {
         throw new Error(`Failed to update knowledge entry: ${error.message}`);
       }
 
-      // Update in vector database if content changed
-      if (data.content && data.content !== existingKnowledge.content) {
-        try {
-          const { storeKnowledge } = await import("../utils/vectorizer");
-          await storeKnowledge(id, data.content, {
-            userId: knowledge.metadata?.userId || knowledge.metadata?.user_id,
-            tenantId,
-            title: knowledge.title,
-            agentId: knowledge.agent_id,
-            ...knowledge.metadata,
-          });
-        } catch (vectorError) {
-          logger.warn("Vector update failed", {
-            knowledgeId: id,
-            tenantId,
-            error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          });
-        }
-      }
+      // Note: Content is stored in Pinecone only, not in database
+      // To update content, delete and re-upload the file
 
       logger.info("Knowledge updated successfully", {
         knowledgeId: id,
         tenantId,
-        contentChanged: !!data.content,
       });
 
       return knowledge;
@@ -258,7 +221,7 @@ export class KnowledgeService {
 
       // Delete from vector database
       try {
-        const { deleteKnowledge: deleteKnowledgeVector } = await import("../utils/vectorizer");
+        const { deleteKnowledge: deleteKnowledgeVector } = await import("./vectorizer.service");
         await deleteKnowledgeVector(id);
       } catch (vectorError) {
         logger.warn("Vector deletion failed", {
@@ -304,7 +267,7 @@ export class KnowledgeService {
   > {
     try {
       // Search using vector similarity
-      const { searchKnowledge: searchKnowledgeVector } = await import("../utils/vectorizer");
+      const { searchKnowledge: searchKnowledgeVector } = await import("./vectorizer.service");
       const searchResults = await searchKnowledgeVector(query, userId, tenantId, topK);
 
       // Get full knowledge entries from database
@@ -332,7 +295,7 @@ export class KnowledgeService {
           id: result.id,
           score: result.score,
           title: (dbEntry?.title || result.metadata?.title || "Untitled") as string,
-          content: dbEntry?.content || result.metadata?.content || "",
+          content: result.metadata?.content || "", // Content is stored in Pinecone metadata
           metadata: dbEntry?.metadata || result.metadata || {},
           agentId: (dbEntry?.agent_id || result.metadata?.agentId) as string | null,
           createdAt: dbEntry?.created_at || null,
@@ -420,7 +383,7 @@ export class KnowledgeService {
     knowledgeWithAgents: number;
     standaloneKnowledge: number;
     recentKnowledge: number;
-    avgContentLength: number;
+    // avgContentLength removed: content is in Pinecone, not DB
   }> {
     try {
       // Get total knowledge count
@@ -443,21 +406,15 @@ export class KnowledgeService {
         .select("*", { count: "exact", head: true })
         .gte("created_at", thirtyDaysAgo.toISOString());
 
-      // Get average content length
-      const { data: contentStats } = await supabaseAdmin.from("knowledge").select("content");
-
-      const avgContentLength = contentStats?.length
-        ? Math.round(
-            contentStats.reduce((sum, entry) => sum + entry.content.length, 0) / contentStats.length
-          )
-        : 0;
+      // Note: Content is stored in Pinecone only, not in database
+      // Average content length cannot be calculated from database
 
       return {
         totalKnowledge: totalKnowledge || 0,
         knowledgeWithAgents: knowledgeWithAgents || 0,
         standaloneKnowledge: (totalKnowledge || 0) - (knowledgeWithAgents || 0),
         recentKnowledge: recentKnowledge || 0,
-        avgContentLength,
+        // avgContentLength removed: content is in Pinecone, not DB
       };
     } catch (error) {
       logger.error("Get knowledge stats service error", {
@@ -492,7 +449,7 @@ export class KnowledgeService {
 
       // Delete from vector database
       try {
-        const { deleteKnowledge: deleteKnowledgeVector } = await import("../utils/vectorizer");
+        const { deleteKnowledge: deleteKnowledgeVector } = await import("./vectorizer.service");
         await deleteKnowledgeVector(id);
       } catch (vectorError) {
         logger.warn("Force delete: Vector deletion failed", {
@@ -531,6 +488,7 @@ export class KnowledgeService {
       originalName: string;
       size: number;
       type: string;
+      url: string; // Public URL in Supabase Storage
     };
     extracted: {
       contentLength: number;
@@ -570,7 +528,17 @@ export class KnowledgeService {
         agentId,
       });
 
-      // Extract text from file
+      // 1. Upload file to Supabase Storage first
+      const { storageService } = await import("./storage.service");
+      const fileUrl = await storageService.uploadKnowledgeFile(file, userId, tenantId);
+
+      logger.info("File uploaded to storage", {
+        fileName: file.originalname,
+        fileUrl,
+        userId,
+      });
+
+      // 2. Extract text from file
       const extractedText = await extractTextFromFile(file);
 
       // Use provided title or file name
@@ -599,6 +567,11 @@ export class KnowledgeService {
           },
           agent_id: agentId || null,
           tenant_id: tenantId,
+          // Store file metadata in database
+          file_url: fileUrl,
+          file_type: file.mimetype,
+          file_size: file.size,
+          file_name: file.originalname,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -612,8 +585,12 @@ export class KnowledgeService {
             userId,
             title: chunkTitle,
             agentId: agentId || null,
-            fileName: extractedText.metadata.fileName,
-            fileType: extractedText.metadata.fileType,
+            tenantId,
+            // Include file info in Pinecone metadata
+            fileUrl,
+            fileName: file.originalname,
+            fileType: file.mimetype,
+            fileSize: file.size,
             chunkIndex: i,
             totalChunks: chunks.length,
             isFromFile: true,
@@ -628,6 +605,16 @@ export class KnowledgeService {
         .select();
 
       if (error) {
+        // Rollback: Delete uploaded file from storage
+        try {
+          await storageService.deleteKnowledgeFile(fileUrl, userId);
+        } catch (deleteError) {
+          logger.error("Failed to delete file after database error", {
+            fileUrl,
+            error: deleteError instanceof Error ? deleteError.message : "Unknown",
+          });
+        }
+
         logger.error("File upload database error", {
           error: error.message,
           fileName: file.originalname,
@@ -638,12 +625,22 @@ export class KnowledgeService {
 
       // Store in vector database
       try {
-        const { batchStoreKnowledge } = await import("../utils/vectorizer");
+        const { batchStoreKnowledge } = await import("./vectorizer.service");
         await batchStoreKnowledge(vectorEntries);
       } catch (vectorError) {
-        // If vector storage fails, remove from database
+        // Rollback: Remove from database
         const ids = knowledgeEntries.map((entry) => entry.id);
         await supabaseAdmin.from("knowledge").delete().in("id", ids);
+
+        // Rollback: Delete uploaded file from storage
+        try {
+          await storageService.deleteKnowledgeFile(fileUrl, userId);
+        } catch (deleteError) {
+          logger.error("Failed to delete file after vector error", {
+            fileUrl,
+            error: deleteError instanceof Error ? deleteError.message : "Unknown",
+          });
+        }
 
         logger.error("File upload vector storage failed, rolled back database entries", {
           fileName: file.originalname,
@@ -667,6 +664,7 @@ export class KnowledgeService {
           originalName: file.originalname,
           size: file.size,
           type: file.mimetype,
+          url: fileUrl, // File URL in storage
         },
         extracted: {
           contentLength: extractedText.content.length,
@@ -681,6 +679,7 @@ export class KnowledgeService {
               title: entry.title,
               contentPreview: entry.content.substring(0, 100) + "...",
               agentId: entry.agent_id,
+              fileUrl: entry.file_url, // Include file URL
               createdAt: entry.created_at,
             })) || [],
         },
@@ -846,7 +845,7 @@ export class KnowledgeService {
 
       // Store in vector database
       try {
-        const { batchStoreKnowledge } = await import("../utils/vectorizer");
+        const { batchStoreKnowledge } = await import("./vectorizer.service");
         await batchStoreKnowledge(allVectorEntries);
       } catch (vectorError) {
         // If vector storage fails, remove from database

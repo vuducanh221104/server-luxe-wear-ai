@@ -19,6 +19,8 @@ export const knowledgeIdValidator = [
 
 /**
  * Validate create knowledge request
+ * Note: Content is no longer stored in database, only in Pinecone
+ * Use file upload endpoint to add knowledge with text content
  */
 export const createKnowledgeValidator = [
   body("title")
@@ -30,14 +32,7 @@ export const createKnowledgeValidator = [
     .notEmpty()
     .withMessage("Title is required"),
 
-  body("content")
-    .isString()
-    .withMessage("Content must be a string")
-    .isLength({ min: 10, max: 50000 })
-    .withMessage("Content must be between 10 and 50000 characters")
-    .trim()
-    .notEmpty()
-    .withMessage("Content is required"),
+  // content removed: Text is stored in Pinecone only via file upload
 
   body("metadata").optional().isObject().withMessage("Metadata must be an object"),
 
@@ -46,6 +41,7 @@ export const createKnowledgeValidator = [
 
 /**
  * Validate update knowledge request
+ * Note: Content is no longer stored in database, only in Pinecone
  */
 export const updateKnowledgeValidator = [
   body("title")
@@ -56,13 +52,7 @@ export const updateKnowledgeValidator = [
     .withMessage("Title must be between 1 and 200 characters")
     .trim(),
 
-  body("content")
-    .optional()
-    .isString()
-    .withMessage("Content must be a string")
-    .isLength({ min: 10, max: 50000 })
-    .withMessage("Content must be between 10 and 50000 characters")
-    .trim(),
+  // content removed: Text is stored in Pinecone only
 
   body("metadata").optional().isObject().withMessage("Metadata must be an object"),
 ];

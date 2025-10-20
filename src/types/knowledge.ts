@@ -8,16 +8,22 @@
 
 /**
  * Knowledge base entry
+ * Note: Text content is stored in Pinecone vector database, not in the database
  */
 export interface Knowledge {
   id: string;
   title: string;
-  content: string;
-  metadata: Record<string, any>;
+  // content removed: Text is stored in Pinecone only
+  metadata: Record<string, unknown>;
   agent_id: string | null;
   tenant_id: string;
   created_at: string;
   updated_at: string;
+  // File-related fields
+  file_url?: string | null; // URL to uploaded file (PDF, video, image)
+  file_type?: string | null; // MIME type
+  file_size?: number | null; // File size in bytes
+  file_name?: string | null; // Original filename
 }
 
 /**
@@ -26,12 +32,17 @@ export interface Knowledge {
 export interface KnowledgeInsert {
   id?: string;
   title: string;
-  content: string;
-  metadata?: Record<string, any>;
+  // content removed: Text is stored in Pinecone only
+  metadata?: Record<string, unknown>;
   agent_id?: string | null;
   tenant_id: string;
   created_at?: string;
   updated_at?: string;
+  // File-related fields
+  file_url?: string | null;
+  file_type?: string | null;
+  file_size?: number | null;
+  file_name?: string | null;
 }
 
 /**
@@ -39,10 +50,15 @@ export interface KnowledgeInsert {
  */
 export interface KnowledgeUpdate {
   title?: string;
-  content?: string;
-  metadata?: Record<string, any>;
+  // content removed: Text is stored in Pinecone only
+  metadata?: Record<string, unknown>;
   agent_id?: string | null;
   updated_at?: string;
+  // File-related fields
+  file_url?: string | null;
+  file_type?: string | null;
+  file_size?: number | null;
+  file_name?: string | null;
 }
 
 /**
@@ -96,7 +112,7 @@ export interface KnowledgeSearchResult {
   score: number;
   title: string;
   content: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   agentId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -176,7 +192,7 @@ export interface KnowledgeChunkData {
     chunkIndex?: number;
     totalChunks?: number;
     isFromFile?: boolean;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -191,7 +207,7 @@ export interface KnowledgeVectorSearchResult {
     tenantId: string;
     title: string;
     agentId?: string | null;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -299,16 +315,22 @@ export interface KnowledgeImportResult {
 /**
  * Admin knowledge entry with agent information
  * Used for admin endpoints that include agent details
+ * Note: Text content is stored in Pinecone vector database
  */
 export interface AdminKnowledgeEntry {
   id: string;
   title: string;
-  content: string;
+  // content removed: Text is stored in Pinecone only
   metadata: Record<string, unknown>;
   agent_id: string | null;
   tenant_id: string;
   created_at: string;
   updated_at: string;
+  // File-related fields
+  file_url?: string | null;
+  file_type?: string | null;
+  file_size?: number | null;
+  file_name?: string | null;
   agent?: {
     id: string;
     name: string;

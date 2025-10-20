@@ -8,6 +8,7 @@ import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { userService } from "../services/user.service";
 import { storageService } from "../services/storage.service";
+import { authService } from "../services/auth.service";
 import { successResponse, errorResponse } from "../utils/response";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
 import logger from "../config/logger";
@@ -337,7 +338,7 @@ export class UserController {
 
   /**
    * Get user by ID (admin only)
-   * GET /api/users/:id
+   * GET /api/users/:userId
    */
   async getUserById(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -351,7 +352,7 @@ export class UserController {
           return errorResponse(res, "Admin access required", 403);
         }
 
-        const { id } = req.params;
+        const { userId: id } = req.params;
 
         const user = await userService.getUserProfile(id);
 
@@ -387,7 +388,7 @@ export class UserController {
 
   /**
    * Update user by ID (admin only)
-   * PUT /api/users/:id
+   * PUT /api/users/:userId
    */
   async updateUserById(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -407,7 +408,7 @@ export class UserController {
           return errorResponse(res, "Admin access required", 403);
         }
 
-        const { id } = req.params;
+        const { userId: id } = req.params;
         const { name, phone, website, role, is_active, email_verified, preferences } = req.body;
 
         const updateData: {
@@ -457,8 +458,52 @@ export class UserController {
   }
 
   /**
+   * Update user password by ID (admin only)
+   * PUT /api/users/:userId/password
+   */
+  async adminUpdatePassword(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        // Check if user has admin privileges
+        if (!["admin", "owner", "super_admin"].includes(req.user.role)) {
+          return errorResponse(res, "Admin access required", 403);
+        }
+
+        const { userId: id } = req.params;
+        const { newPassword } = req.body;
+
+        // Reset password using auth service
+        await authService.resetPassword(id, newPassword);
+
+        return successResponse(
+          res,
+          { message: "User password updated successfully" },
+          "User password updated successfully"
+        );
+      },
+      "admin update user password",
+      {
+        context: {
+          adminUserId: req.user?.id,
+          targetUserId: req.params.userId,
+        },
+      }
+    );
+  }
+
+  /**
    * Delete user by ID (admin only)
-   * DELETE /api/users/:id
+   * DELETE /api/users/:userId
    */
   async deleteUserById(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
@@ -472,7 +517,7 @@ export class UserController {
           return errorResponse(res, "Admin access required", 403);
         }
 
-        const { id } = req.params;
+        const { userId: id } = req.params;
 
         // Prevent admin from deleting themselves
         if (id === req.user.id) {
@@ -508,6 +553,7 @@ export const {
   listUsers,
   getUserById,
   updateUserById,
+  adminUpdatePassword,
   deleteUserById,
 } = userController;
 

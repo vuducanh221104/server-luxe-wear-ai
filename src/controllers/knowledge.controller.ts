@@ -46,14 +46,15 @@ export class KnowledgeController {
           return errorResponse(res, "Tenant context not found", 400);
         }
 
-        const { title, content, metadata, agentId } = req.body;
+        const { title, metadata, agentId } = req.body;
         const knowledgeId = uuidv4();
 
         // Prepare data for service
+        // Note: Content is stored in Pinecone via file upload, not here
         const knowledgeData = {
           id: knowledgeId,
           title,
-          content,
+          // content removed: Use file upload endpoint to add content
           metadata: {
             ...metadata,
             userId: req.user.id,
@@ -72,11 +73,16 @@ export class KnowledgeController {
           {
             id: knowledge.id,
             title: knowledge.title,
-            content: knowledge.content,
+            // content removed: Text is stored in Pinecone only
             metadata: knowledge.metadata,
             agentId: knowledge.agent_id,
             createdAt: knowledge.created_at,
             updatedAt: knowledge.updated_at,
+            // File metadata
+            fileUrl: knowledge.file_url,
+            fileType: knowledge.file_type,
+            fileSize: knowledge.file_size,
+            fileName: knowledge.file_name,
           },
           "Knowledge entry created successfully",
           201
@@ -132,11 +138,16 @@ export class KnowledgeController {
             knowledge: result.knowledge.map((entry) => ({
               id: entry.id,
               title: entry.title,
-              content: entry.content,
+              // content removed: Text is stored in Pinecone only
               metadata: entry.metadata,
               agentId: entry.agent_id,
               createdAt: entry.created_at,
               updatedAt: entry.updated_at,
+              // File metadata
+              fileUrl: entry.file_url,
+              fileType: entry.file_type,
+              fileSize: entry.file_size,
+              fileName: entry.file_name,
             })),
             pagination: result.pagination,
           },
@@ -190,11 +201,16 @@ export class KnowledgeController {
           {
             id: knowledge.id,
             title: knowledge.title,
-            content: knowledge.content,
+            // content removed: Text is stored in Pinecone only
             metadata: knowledge.metadata,
             agentId: knowledge.agent_id,
             createdAt: knowledge.created_at,
             updatedAt: knowledge.updated_at,
+            // File metadata
+            fileUrl: knowledge.file_url,
+            fileType: knowledge.file_type,
+            fileSize: knowledge.file_size,
+            fileName: knowledge.file_name,
           },
           "Knowledge entry retrieved successfully"
         );
@@ -269,12 +285,12 @@ export class KnowledgeController {
         }
 
         const { id } = req.params;
-        const { title, content, metadata } = req.body;
+        const { title, metadata } = req.body;
 
         // Use service to update knowledge
         const knowledge = await knowledgeService.updateKnowledge(
           id,
-          { title, content, metadata },
+          { title, metadata },
           req.tenant.id
         );
 
@@ -283,11 +299,16 @@ export class KnowledgeController {
           {
             id: knowledge.id,
             title: knowledge.title,
-            content: knowledge.content,
+            // content removed: Text is stored in Pinecone only
             metadata: knowledge.metadata,
             agentId: knowledge.agent_id,
             createdAt: knowledge.created_at,
             updatedAt: knowledge.updated_at,
+            // File metadata
+            fileUrl: knowledge.file_url,
+            fileType: knowledge.file_type,
+            fileSize: knowledge.file_size,
+            fileName: knowledge.file_name,
           },
           "Knowledge entry updated successfully"
         );
@@ -502,11 +523,16 @@ export class KnowledgeController {
             knowledge: result.knowledge.map((entry: AdminKnowledgeEntry) => ({
               id: entry.id,
               title: entry.title,
-              content: entry.content.substring(0, 200) + (entry.content.length > 200 ? "..." : ""),
+              // content removed: Text is stored in Pinecone only
               metadata: entry.metadata,
               agent: entry.agent,
               createdAt: entry.created_at,
               updatedAt: entry.updated_at,
+              // Include file metadata if available
+              fileUrl: entry.file_url,
+              fileType: entry.file_type,
+              fileSize: entry.file_size,
+              fileName: entry.file_name,
             })),
             pagination: result.pagination,
           },

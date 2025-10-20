@@ -46,7 +46,7 @@ src/
 ### 1. **Store Knowledge** (Lưu thông tin vào Pinecone)
 
 ```typescript
-import { storeKnowledge } from "./utils/vectorizer";
+import { storeKnowledge } from "./services/vectorizer.service";
 
 await storeKnowledge("unique-id-1", "Oversized blazers are trending in 2024.", {
   userId: "user-123",
@@ -57,7 +57,7 @@ await storeKnowledge("unique-id-1", "Oversized blazers are trending in 2024.", {
 ### 2. **Search Knowledge** (Tìm kiếm thông tin)
 
 ```typescript
-import { searchKnowledge } from "./utils/vectorizer";
+import { searchKnowledge } from "./services/vectorizer.service";
 
 const results = await searchKnowledge(
   "What is trending in fashion?",
@@ -69,7 +69,7 @@ const results = await searchKnowledge(
 ### 3. **Chat with RAG** (Chat với AI + Knowledge)
 
 ```typescript
-import { chatWithRAG } from "./utils/vectorizer";
+import { chatWithRAG } from "./services/vectorizer.service";
 
 const response = await chatWithRAG(
   "What should I wear today?",
@@ -107,7 +107,7 @@ console.log(response);
 ### Example 1: Simple Chat
 
 ```typescript
-import { chatWithRAG } from "./utils/vectorizer";
+import { chatWithRAG } from "./services/vectorizer.service";
 
 const response = await chatWithRAG("Recommend a summer outfit", "user-123");
 
@@ -117,7 +117,7 @@ console.log(response);
 ### Example 2: Store & Search
 
 ```typescript
-import { storeKnowledge, searchKnowledge } from "./utils/vectorizer";
+import { storeKnowledge, searchKnowledge } from "./services/vectorizer.service";
 
 // Store knowledge
 await storeKnowledge("fashion-tip-1", "Linen is perfect for summer because it's breathable.", {
@@ -136,7 +136,7 @@ results.forEach((r) => {
 ### Example 3: Batch Import
 
 ```typescript
-import { batchStoreKnowledge } from "./utils/vectorizer";
+import { batchStoreKnowledge } from "./services/vectorizer.service";
 
 const fashionTips = [
   {
@@ -157,7 +157,7 @@ await batchStoreKnowledge(fashionTips);
 ### Example 4: Custom System Prompt
 
 ```typescript
-import { chatWithRAG } from "./utils/vectorizer";
+import { chatWithRAG } from "./services/vectorizer.service";
 
 const response = await chatWithRAG(
   "What to wear for a job interview?",
@@ -173,7 +173,7 @@ const response = await chatWithRAG(
 ### 1. **Chunk Large Texts**
 
 ```typescript
-import { chunkText, batchStoreKnowledge } from "./utils/vectorizer";
+import { chunkText, batchStoreKnowledge } from "./services/vectorizer.service";
 
 const longArticle = "...very long fashion article...";
 const chunks = chunkText(longArticle, 1000);
@@ -218,7 +218,7 @@ if (relevant.length === 0) {
 ### 4. **Handle Context Size**
 
 ```typescript
-import { buildContext } from "./utils/vectorizer";
+import { buildContext } from "./services/vectorizer.service";
 
 const results = await searchKnowledge("query", userId, 10);
 
@@ -236,7 +236,7 @@ Sử dụng trong controller:
 ```typescript
 // src/controllers/agent.controller.ts
 import { Request, Response } from "express";
-import { chatWithRAG } from "../utils/vectorizer";
+import { chatWithRAG } from "../services/vectorizer.service";
 
 export const chat = async (req: Request, res: Response): Promise<void> => {
   try {

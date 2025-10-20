@@ -25,7 +25,6 @@ Xử lý request/response, gọi services, return data.
 - `supabase.service.ts` - Service chung gọi Supabase API
 - `agent.service.ts` - Logic xử lý AI agents
 - `knowledge.service.ts` - Quản lý knowledge base & vectorization
-- `ai.service.ts` - Generate AI responses, embeddings
 
 #### `/middlewares` - Middlewares
 

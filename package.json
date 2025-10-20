@@ -15,6 +15,8 @@
     "test:integration": "jest --testPathPattern=integration --coverage",
     "test:auth": "jest --testPathPattern=auth --coverage",
     "test:ci": "jest --ci --coverage --watchAll=false",
+    "test:api": "ts-node scripts/test-api.ts",
+    "test:user-api": "ts-node scripts/test-user-api.ts",
     "import:knowledge": "ts-node src/scripts/import-knowledge.ts",
     "lint": "eslint src/**/*.ts tests/**/*.ts",
     "lint:fix": "eslint src/**/*.ts tests/**/*.ts --fix",

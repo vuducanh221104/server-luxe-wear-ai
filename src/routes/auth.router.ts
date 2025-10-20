@@ -11,6 +11,10 @@ import {
   forgotPasswordValidator,
   resetPasswordValidator,
   refreshTokenValidator,
+  changePasswordValidator,
+  verifyEmailValidator,
+  requestVerifyEmailValidator,
+  resetPasswordWithTokenValidator,
 } from "../validators/auth.validator";
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { authRateLimiter } from "../middlewares/rateLimiter.middleware";
@@ -59,10 +63,56 @@ router.post(
 
 /**
  * POST /api/auth/reset-password
- * Reset password with token from email
+ * Reset password (admin only)
+ * @access Private
+ */
+router.post(
+  "/reset-password",
+  authMiddleware,
+  resetPasswordValidator,
+  authController.resetPassword
+);
+
+/**
+ * POST /api/auth/change-password
+ * Change password for authenticated user
+ * @access Private
+ */
+router.post(
+  "/change-password",
+  authMiddleware,
+  changePasswordValidator,
+  authController.changePassword
+);
+
+/**
+ * POST /api/auth/verify-email
+ * Verify email using verification token
  * @access Public
  */
-router.post("/reset-password", resetPasswordValidator, authController.resetPassword);
+router.post("/verify-email", verifyEmailValidator, authController.verifyEmail);
+
+/**
+ * POST /api/auth/request-verify-email
+ * Request an email verification token to be sent
+ * @access Public
+ */
+router.post(
+  "/request-verify-email",
+  requestVerifyEmailValidator,
+  authController.sendTokenVerifyEmail
+);
+
+/**
+ * POST /api/auth/reset-password-with-token
+ * Reset password using password reset token
+ * @access Public
+ */
+router.post(
+  "/reset-password-with-token",
+  resetPasswordWithTokenValidator,
+  authController.resetPasswordWithToken
+);
 
 /**
  * GET /api/auth/me

@@ -12,7 +12,7 @@ import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { agentService } from "../services/agent.service";
 import { successResponse, errorResponse } from "../utils/response";
-import { chatWithRAG } from "../utils/vectorizer";
+import { chatWithRAG } from "../services/vectorizer.service";
 import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
@@ -348,12 +348,14 @@ export class AgentController {
         }
 
         const searchTerm = req.query.q as string;
+        const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 10;
 
         const result = await agentService.searchAgents(
           req.user.id,
           req.tenant.id,
           searchTerm,
+          page,
           limit
         );
 
@@ -418,6 +420,8 @@ export class AgentController {
         const systemPrompt =
           (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
 
+        const startTime = Date.now();
+
         logger.info("Agent chat request", {
           agentId,
           userId: req.user.id,
@@ -426,37 +430,102 @@ export class AgentController {
           hasContext: !!context,
         });
 
-        // Use RAG to generate response with agent's knowledge base
-        const response = await chatWithRAG(
-          context ? `${context}\n\nUser: ${message}` : message,
-          req.user.id, // Use user's knowledge base
-          systemPrompt
-        );
-
-        // Log analytics with tenant context
+        // Check if user has knowledge base to decide RAG vs direct AI
+        let useRag = false;
         try {
-          await supabaseAdmin.from("analytics").insert({
-            agent_id: agentId,
-            user_id: req.user.id,
-            tenant_id: req.tenant.id,
-            query: message,
-            response: response,
-            vector_score: null,
-          });
-        } catch (analyticsError) {
-          logger.warn("Failed to log analytics", {
+          const { count, error: countError } = await supabaseAdmin
+            .from("knowledge")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", req.user.id)
+            .eq("tenant_id", req.tenant.id)
+            .limit(1);
+
+          if (!countError) {
+            useRag = (count || 0) > 0;
+          }
+
+          logger.info("Knowledge base check", {
             agentId,
             userId: req.user.id,
-            tenantId: req.tenant.id,
-            error: analyticsError instanceof Error ? analyticsError.message : "Unknown error",
+            hasKnowledge: useRag,
+            knowledgeCount: count || 0,
           });
+        } catch (error) {
+          logger.warn("Failed to check knowledge base, defaulting to direct AI", {
+            agentId,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+          useRag = false;
         }
+
+        // Generate AI response
+        const aiStartTime = Date.now();
+        let response: string;
+
+        if (useRag) {
+          // Use RAG pipeline with knowledge base
+          logger.info("Using RAG pipeline with knowledge base");
+          response = await chatWithRAG(
+            context ? `${context}\n\nUser: ${message}` : message,
+            req.user.id,
+            systemPrompt
+          );
+        } else {
+          // Direct AI call without RAG (faster - use Flash model)
+          logger.info("Using direct AI (no knowledge base)");
+          const { geminiApi } = await import("../integrations/gemini.api");
+          const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
+          const prompt = `${systemPrompt}\n\nUser: ${fullMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
+
+          const result = await geminiApi.generateContent(prompt, {
+            model: "gemini-2.5-flash",
+            maxOutputTokens: 3072,
+            temperature: 0.7,
+          });
+
+          if (!result.data) {
+            throw new Error("AI response is empty");
+          }
+
+          response = result.data;
+        }
+
+        const aiDuration = Date.now() - aiStartTime;
+
+        // Log analytics asynchronously (fire-and-forget)
+        const userId = req.user.id;
+        const tenantId = req.tenant.id;
+        (async (): Promise<void> => {
+          try {
+            await supabaseAdmin.from("analytics").insert({
+              agent_id: agentId,
+              user_id: userId,
+              tenant_id: tenantId,
+              query: message,
+              response: response,
+              vector_score: null,
+            });
+            logger.debug("Analytics logged", { agentId });
+          } catch (analyticsError) {
+            logger.warn("Failed to log analytics", {
+              agentId,
+              userId,
+              tenantId,
+              error: analyticsError instanceof Error ? analyticsError.message : "Unknown error",
+            });
+          }
+        })();
+
+        const totalDuration = Date.now() - startTime;
 
         logger.info("Agent chat completed", {
           agentId,
           userId: req.user.id,
           tenantId: req.tenant.id,
           responseLength: response.length,
+          aiDuration: `${aiDuration}ms`,
+          totalDuration: `${totalDuration}ms`,
+          usedRag: useRag,
         });
 
         return successResponse(
@@ -469,6 +538,11 @@ export class AgentController {
               description: agent.description,
             },
             timestamp: new Date().toISOString(),
+            performance: {
+              aiDuration,
+              totalDuration,
+              useRag,
+            },
           },
           "Chat response generated successfully"
         );
@@ -698,66 +772,16 @@ export class AgentController {
   async getSystemAgentStats(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
-        // Get total agents count
-        const { count: totalAgents } = await supabaseAdmin
-          .from("agents")
-          .select("*", { count: "exact", head: true });
-
-        // Get public agents count
-        const { count: publicAgents } = await supabaseAdmin
-          .from("agents")
-          .select("*", { count: "exact", head: true })
-          .eq("is_public", true);
-
-        // Get total users with agents
-        const { data: usersWithAgents } = await supabaseAdmin
-          .from("agents")
-          .select("owner_id")
-          .not("owner_id", "is", null);
-
-        const uniqueUsers = new Set(usersWithAgents?.map((a) => a.owner_id)).size;
-
-        // Get total analytics/conversations
-        const { count: totalConversations } = await supabaseAdmin
-          .from("analytics")
-          .select("*", { count: "exact", head: true });
-
-        // Get agents created in last 30 days
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-        const { count: recentAgents } = await supabaseAdmin
-          .from("agents")
-          .select("*", { count: "exact", head: true })
-          .gte("created_at", thirtyDaysAgo.toISOString());
-
-        // Get tenant statistics
-        const { count: totalTenants } = await supabaseAdmin
-          .from("tenants")
-          .select("*", { count: "exact", head: true });
+        const stats = await agentService.getSystemAgentStats();
 
         logger.info("Admin: System stats retrieved", {
           adminId: req.user?.id,
-          totalAgents,
-          publicAgents,
-          totalTenants,
+          totalAgents: stats.totalAgents,
+          publicAgents: stats.publicAgents,
+          totalTenants: stats.totalTenants,
         });
 
-        return successResponse(
-          res,
-          {
-            totalAgents: totalAgents || 0,
-            publicAgents: publicAgents || 0,
-            privateAgents: (totalAgents || 0) - (publicAgents || 0),
-            uniqueUsers,
-            totalConversations: totalConversations || 0,
-            recentAgents: recentAgents || 0,
-            totalTenants: totalTenants || 0,
-            averageAgentsPerUser:
-              uniqueUsers > 0 ? Math.round(((totalAgents || 0) / uniqueUsers) * 100) / 100 : 0,
-          },
-          "System statistics retrieved successfully"
-        );
+        return successResponse(res, stats, "System statistics retrieved successfully");
       },
       "get system agent stats (admin)",
       {
@@ -781,23 +805,7 @@ export class AgentController {
 
         const { agentId } = req.params;
 
-        // Get agent info before deletion (for logging)
-        const { data: agent } = await supabaseAdmin
-          .from("agents")
-          .select("id, name, owner_id, tenant_id")
-          .eq("id", agentId)
-          .single();
-
-        if (!agent) {
-          return errorResponse(res, "Agent not found", 404);
-        }
-
-        // Force delete (bypass ownership check)
-        const { error } = await supabaseAdmin.from("agents").delete().eq("id", agentId);
-
-        if (error) {
-          throw new Error(error.message);
-        }
+        const agent = await agentService.forceDeleteAgent(agentId);
 
         logger.warn("Admin: Agent force deleted", {
           agentId,
@@ -836,67 +844,39 @@ export class AgentController {
         const { userId } = req.params;
         const page = parseInt(req.query.page as string) || 1;
         const perPage = parseInt(req.query.perPage as string) || 10;
-        const offset = (page - 1) * perPage;
 
-        // Get user's agents count
-        const { count, error: countError } = await supabaseAdmin
-          .from("agents")
-          .select("*", { count: "exact", head: true })
-          .eq("owner_id", userId);
-
-        if (countError) {
-          throw new Error(countError.message);
-        }
-
-        // Get user's agents with pagination
-        const { data: agents, error } = await supabaseAdmin
-          .from("agents")
-          .select(
-            `
-            *,
-            tenant:tenant_id (
-              id,
-              name,
-              plan
-            )
-          `
-          )
-          .eq("owner_id", userId)
-          .order("created_at", { ascending: false })
-          .range(offset, offset + perPage - 1);
-
-        if (error) {
-          throw new Error(error.message);
-        }
-
-        const total = count || 0;
-        const totalPages = Math.ceil(total / perPage);
+        const result = await agentService.getUserAgents(userId, page, perPage);
 
         logger.info("Admin: User agents retrieved", {
           targetUserId: userId,
           adminId: req.user?.id,
-          total,
+          total: result.pagination.totalCount,
         });
 
         return successResponse(
           res,
           {
             userId,
-            agents: agents.map((agent) => ({
-              id: agent.id,
-              name: agent.name,
-              description: agent.description,
-              isPublic: agent.is_public,
-              hasApiKey: !!agent.api_key,
-              tenant: agent.tenant,
-              createdAt: agent.created_at,
-              updatedAt: agent.updated_at,
-            })),
+            agents: result.agents.map((agent) => {
+              const agentWithTenant = agent as typeof agent & {
+                tenant?: { id: string; name: string; plan: string };
+              };
+              return {
+                id: agent.id,
+                name: agent.name,
+                description: agent.description,
+                isPublic: agent.is_public,
+                hasApiKey: !!agent.api_key,
+                tenant: agentWithTenant.tenant,
+                createdAt: agent.created_at,
+                updatedAt: agent.updated_at,
+              };
+            }),
             pagination: {
-              page,
-              perPage,
-              total,
-              totalPages,
+              page: result.pagination.page,
+              perPage: result.pagination.perPage,
+              total: result.pagination.totalCount,
+              totalPages: result.pagination.totalPages,
             },
           },
           "User agents retrieved successfully"

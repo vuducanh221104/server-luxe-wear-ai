@@ -183,3 +183,11 @@ export const togglePublicValidator: ValidationChain[] = [
       return true;
     }),
 ];
+
+/**
+ * Validator for getting user agents (Admin only)
+ */
+export const getUserAgentsValidator: ValidationChain[] = [
+  param("userId").isUUID().withMessage("User ID must be a valid UUID"),
+  ...paginationValidator,
+];

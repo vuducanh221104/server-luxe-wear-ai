@@ -180,6 +180,118 @@ export class StorageService {
   }
 
   /**
+   * Upload knowledge file (PDF, DOCX, image, video) to Supabase Storage
+   * @param file - Multer file object
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @returns Public URL of uploaded file
+   */
+  async uploadKnowledgeFile(
+    file: Express.Multer.File,
+    userId: string,
+    tenantId: string
+  ): Promise<string> {
+    try {
+      // Generate unique filename
+      const timestamp = Date.now();
+      const fileName = `${userId}-${timestamp}-${file.originalname}`;
+      // Path: knowledge/{tenantId}/{userId}/{filename}
+      const filePath = `knowledge/${tenantId}/${userId}/${fileName}`;
+
+      logger.info("Uploading knowledge file", {
+        userId,
+        tenantId,
+        fileName: file.originalname,
+        fileSize: file.size,
+        fileType: file.mimetype,
+      });
+
+      // Upload to Supabase Storage
+      const { error } = await supabaseAdmin.storage
+        .from("user-uploads")
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype,
+          cacheControl: "3600",
+          upsert: false,
+        });
+
+      if (error) {
+        logger.error("Knowledge file upload failed", {
+          error: error.message,
+          userId,
+          fileName: file.originalname,
+        });
+        throw new Error(`Upload failed: ${error.message}`);
+      }
+
+      // Get public URL
+      const { data: urlData } = supabaseAdmin.storage.from("user-uploads").getPublicUrl(filePath);
+
+      if (!urlData.publicUrl) {
+        throw new Error("Failed to get public URL for uploaded file");
+      }
+
+      logger.info("Knowledge file uploaded successfully", {
+        userId,
+        tenantId,
+        fileName: file.originalname,
+        publicUrl: urlData.publicUrl,
+      });
+
+      return urlData.publicUrl;
+    } catch (error) {
+      logger.error("Knowledge file upload error", {
+        userId,
+        tenantId,
+        error: error instanceof Error ? error.message : "Unknown error",
+        fileName: file.originalname,
+        fileSize: file.size,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Delete knowledge file from Supabase Storage
+   * @param fileUrl - File URL to delete
+   * @param userId - User ID
+   */
+  async deleteKnowledgeFile(fileUrl: string, userId: string): Promise<void> {
+    try {
+      // Extract file path from URL
+      const url = new URL(fileUrl);
+      const pathParts = url.pathname.split("/");
+      const bucketIndex = pathParts.findIndex((part) => part === "user-uploads");
+
+      if (bucketIndex === -1) {
+        throw new Error("Invalid file URL - bucket not found");
+      }
+
+      // Reconstruct file path
+      const filePath = pathParts.slice(bucketIndex + 1).join("/");
+
+      logger.info("Deleting knowledge file", { userId, filePath });
+
+      // Delete from Supabase Storage
+      const { error } = await supabaseAdmin.storage.from("user-uploads").remove([filePath]);
+
+      if (error) {
+        logger.error("Knowledge file deletion failed", { error: error.message, userId, filePath });
+        throw new Error(`Deletion failed: ${error.message}`);
+      }
+
+      logger.info("Knowledge file deleted successfully", { userId, filePath });
+    } catch (error) {
+      logger.error("Knowledge file deletion error", {
+        userId,
+        fileUrl,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Test storage connection
    * @returns Connection test result
    */

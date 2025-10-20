@@ -101,3 +101,24 @@ export interface WebhookHealthCheck {
   tenantId?: string;
   timestamp: string;
 }
+
+/**
+ * Webhook signature verification config
+ */
+export interface WebhookSignatureConfig {
+  provider: WebhookProvider;
+  secret: string;
+  algorithm?: "sha256" | "sha1";
+  headerName?: string;
+  timestampHeader?: string;
+  toleranceSeconds?: number;
+}
+
+/**
+ * Webhook signature verification result
+ */
+export interface SignatureVerificationResult {
+  valid: boolean;
+  error?: string;
+  timestamp?: number;
+}

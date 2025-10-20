@@ -6,7 +6,7 @@
 
 import mammoth from "mammoth";
 import { v4 as uuidv4 } from "uuid";
-import { batchStoreKnowledge } from "./vectorizer";
+import { batchStoreKnowledge } from "../services/vectorizer.service";
 import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
 

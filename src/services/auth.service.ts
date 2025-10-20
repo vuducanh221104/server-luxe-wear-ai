@@ -138,9 +138,15 @@ export class AuthService {
       // Update last login
       await this.updateLastLogin(user.id);
 
-      // Generate tokens
+      // Generate access token
       const token = await this.generateToken(user.id);
-      const refreshToken = await this.generateRefreshToken(user.id);
+
+      // Reuse existing active refresh token if available, otherwise create a new one
+      const activeRefreshTokens = await tokenService.getUserActiveTokens(user.id, "refresh");
+      const refreshToken =
+        activeRefreshTokens && activeRefreshTokens.length > 0
+          ? activeRefreshTokens[0].token_value
+          : await this.generateRefreshToken(user.id);
 
       logger.info("User logged in successfully", {
         userId: user.id,

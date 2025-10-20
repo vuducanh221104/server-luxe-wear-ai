@@ -71,14 +71,14 @@ export const forgotPasswordValidator: ValidationChain[] = [
  * Validator for reset password
  */
 export const resetPasswordValidator: ValidationChain[] = [
-  body("password")
+  body("newPassword")
     .notEmpty()
-    .withMessage("Password is required")
+    .withMessage("New password is required")
     .isLength({ min: 8 })
-    .withMessage("Password must be at least 8 characters")
+    .withMessage("New password must be at least 8 characters")
     .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
     .withMessage(
-      "Password must contain at least one uppercase letter, one lowercase letter, and one number"
+      "New password must contain at least one uppercase letter, one lowercase letter, and one number"
     ),
 ];
 
@@ -87,4 +87,56 @@ export const resetPasswordValidator: ValidationChain[] = [
  */
 export const refreshTokenValidator: ValidationChain[] = [
   body("refreshToken").notEmpty().withMessage("Refresh token is required"),
+];
+
+/**
+ * Validator for change password
+ */
+export const changePasswordValidator: ValidationChain[] = [
+  body("currentPassword").notEmpty().withMessage("Current password is required"),
+  body("newPassword")
+    .notEmpty()
+    .withMessage("New password is required")
+    .isLength({ min: 8 })
+    .withMessage("New password must be at least 8 characters")
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage(
+      "New password must contain at least one uppercase letter, one lowercase letter, and one number"
+    ),
+];
+
+/**
+ * Validator for verify email
+ */
+export const verifyEmailValidator: ValidationChain[] = [
+  body("token").notEmpty().withMessage("Verification token is required"),
+];
+
+/**
+ * Validator for requesting a verification email
+ */
+export const requestVerifyEmailValidator: ValidationChain[] = [
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Email must be valid")
+    .normalizeEmail(),
+];
+
+/**
+ * Validator for resetting password using reset token
+ */
+export const resetPasswordWithTokenValidator: ValidationChain[] = [
+  body("token").notEmpty().withMessage("Reset token is required"),
+  body("newPassword")
+    .notEmpty()
+    .withMessage("New password is required")
+    .isLength({ min: 8 })
+    .withMessage("New password must be at least 8 characters")
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage(
+      "New password must contain at least one uppercase letter, one lowercase letter, and one number"
+    ),
 ];

@@ -7,6 +7,7 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { authService } from "../services/auth.service";
+import { tokenService } from "../services/token.service";
 import { userService } from "../services/user.service";
 import { successResponse, errorResponse } from "../utils/response";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
@@ -325,11 +326,31 @@ export class AuthController {
         }
 
         const { token } = req.body;
-        const result = await authService.refreshToken(token);
 
-        // In a real implementation, you would verify the email token
-        // For now, we'll just return a success message
-        return successResponse(res, { token: result.token }, "Token refreshed successfully");
+        // Validate email verification token
+        const tokenRecord = await tokenService.validateToken(token, "email_verification");
+        if (!tokenRecord) {
+          return errorResponse(res, "Invalid or expired verification token", 400);
+        }
+
+        // Mark user's email as verified
+        const user = await authService.getUserById(tokenRecord.user_id);
+        if (!user) {
+          return errorResponse(res, "User not found", 404);
+        }
+
+        if (!user.email_verified) {
+          await authService.updateUser(user.id, { email_verified: true });
+        }
+
+        // Revoke used token
+        await tokenService.revokeToken(token, "email_verification");
+
+        return successResponse(
+          res,
+          { message: "Email verified successfully" },
+          "Email verified successfully"
+        );
       },
       "verify email",
       {
@@ -353,18 +374,146 @@ export class AuthController {
           return errorResponse(res, "Validation failed", 400, errors.array());
         }
 
-        // In a real implementation, you would send a password reset email
-        // For now, we'll just return a success message
-        return successResponse(
-          res,
-          { message: "Password reset email sent (not implemented yet)" },
-          "Password reset requested"
-        );
+        const { email } = req.body as { email: string };
+
+        // Find user
+        const user = await authService.getUserByEmail(email);
+        if (!user) {
+          // Do not reveal that email doesn't exist
+          return successResponse(
+            res,
+            { message: "If an account exists, a reset email has been sent" },
+            "Password reset requested"
+          );
+        }
+
+        // Create password reset token
+        const resetToken = await tokenService.createToken({
+          userId: user.id,
+          tokenType: "password_reset",
+          expiresInDays: 1,
+          metadata: { reason: "forgot_password" },
+        });
+
+        // TODO: send email with reset link containing resetToken.token_value
+
+        // For now, respond generically and include token in non-production for testing
+        const responsePayload: Record<string, unknown> = {
+          message: "If an account exists, a reset email has been sent",
+        };
+        if (process.env.NODE_ENV !== "production") {
+          responsePayload.token = resetToken.token_value;
+        }
+
+        return successResponse(res, responsePayload, "Password reset requested");
       },
       "forgot password",
       {
         context: {
           email: req.body?.email,
+          ip: req.ip,
+        },
+      }
+    );
+  }
+
+  /**
+   * Send email verification token
+   * POST /api/auth/request-verify-email
+   */
+  async sendTokenVerifyEmail(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        const { email } = req.body as { email: string };
+
+        const user = await authService.getUserByEmail(email);
+        if (!user) {
+          // Không tiết lộ email tồn tại hay không
+          return successResponse(
+            res,
+            { message: "Nếu tài khoản tồn tại, email xác thực đã được gửi" },
+            "Verification email requested"
+          );
+        }
+
+        if (user.email_verified) {
+          return successResponse(
+            res,
+            { message: "Email đã được xác thực trước đó" },
+            "Email already verified"
+          );
+        }
+
+        const verifyToken = await tokenService.createToken({
+          userId: user.id,
+          tokenType: "email_verification",
+          expiresInDays: 1,
+          metadata: { reason: "verify_email" },
+        });
+
+        // TODO: Gửi email kèm link chứa verifyToken.token_value
+
+        const payload: Record<string, unknown> = {
+          message: "Nếu tài khoản tồn tại, email xác thực đã được gửi",
+        };
+        if (process.env.NODE_ENV !== "production") {
+          payload.token = verifyToken.token_value;
+        }
+
+        return successResponse(res, payload, "Verification email requested");
+      },
+      "request verify email",
+      {
+        context: {
+          email: req.body?.email,
+          ip: req.ip,
+        },
+      }
+    );
+  }
+
+  /**
+   * Reset password using reset token (public)
+   * POST /api/auth/reset-password-with-token
+   */
+  async resetPasswordWithToken(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        const { token, newPassword } = req.body as { token: string; newPassword: string };
+
+        // Validate password reset token
+        const tokenRecord = await tokenService.validateToken(token, "password_reset");
+        if (!tokenRecord) {
+          return errorResponse(res, "Invalid or expired reset token", 400);
+        }
+
+        // Reset password
+        await authService.resetPassword(tokenRecord.user_id, newPassword);
+
+        // Revoke used token
+        await tokenService.revokeToken(token, "password_reset");
+
+        return successResponse(
+          res,
+          { message: "Password has been reset successfully" },
+          "Password has been reset successfully"
+        );
+      },
+      "reset password with token",
+      {
+        context: {
           ip: req.ip,
         },
       }
@@ -429,6 +578,8 @@ export const {
   verifyEmail,
   forgotPassword,
   verifyToken,
+  sendTokenVerifyEmail,
+  resetPasswordWithToken,
 } = authController;
 
 export default authController;

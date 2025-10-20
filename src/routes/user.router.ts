@@ -11,6 +11,7 @@ import {
   updatePasswordValidator,
   userIdValidator,
   paginationValidator,
+  updateUserByIdValidator,
   banUserValidator,
 } from "../validators/user.validator";
 import { authMiddleware } from "../middlewares/auth.middleware";
@@ -70,6 +71,13 @@ router.put(
 router.get("/stats", authMiddleware, userController.getUserStats);
 
 /**
+ * GET /api/users/memberships
+ * Get current user tenant memberships
+ * @access Private
+ */
+router.get("/memberships", authMiddleware, userController.getUserMemberships);
+
+/**
  * POST /api/users/avatar
  * Upload user avatar
  * @access Private
@@ -110,6 +118,19 @@ router.get("/", authMiddleware, paginationValidator, userController.listUsers);
 router.get("/:userId", authMiddleware, userIdValidator, userController.getUserById);
 
 /**
+ * PUT /api/users/:userId
+ * Update user by ID (Admin only)
+ * @access Admin
+ */
+router.put(
+  "/:userId",
+  authMiddleware,
+  authRateLimiter,
+  updateUserByIdValidator,
+  userController.updateUserById
+);
+
+/**
  * PUT /api/users/:userId/password
  * Update user password (Admin only)
  * @access Admin
@@ -119,7 +140,7 @@ router.put(
   authMiddleware,
   authRateLimiter,
   [...userIdValidator, ...updatePasswordValidator],
-  userController.updateProfile
+  userController.adminUpdatePassword
 );
 
 /**

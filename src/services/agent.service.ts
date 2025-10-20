@@ -274,37 +274,86 @@ export class AgentService {
   ): Promise<AgentListResponse> {
     logger.info("Searching agents", { userId, tenantId, query, page, perPage });
 
-    const offset = (page - 1) * perPage;
-
-    const { data, error, count } = await supabaseAdmin
-      .from("agents")
-      .select("*", { count: "exact" })
-      .eq("owner_id", userId)
-      .eq("tenant_id", tenantId)
-      .or(`name.ilike.%${query}%,description.ilike.%${query}%`)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + perPage - 1);
-
-    if (error) {
-      logger.error("Failed to search agents", { error: error.message, userId, query });
-      throw new Error(error.message);
+    // Validate page number
+    if (page < 1) {
+      page = 1;
     }
 
-    const totalPages = Math.ceil((count || 0) / perPage);
+    const offset = (page - 1) * perPage;
 
-    logger.info("Agent search completed", {
-      userId,
-      query,
-      count: data?.length || 0,
-      totalCount: count || 0,
-    });
+    // If no search query, just list all agents
+    if (!query || !query.trim()) {
+      const { data, error, count } = await supabaseAdmin
+        .from("agents")
+        .select("*", { count: "exact" })
+        .eq("owner_id", userId)
+        .eq("tenant_id", tenantId)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + perPage - 1);
+
+      if (error) {
+        logger.error("Failed to list agents", {
+          error: error,
+          errorMessage: error.message,
+          userId,
+        });
+        throw new Error(`Failed to list agents: ${error.message || JSON.stringify(error)}`);
+      }
+
+      const totalCount = count || 0;
+      const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
+
+      return {
+        agents: data || [],
+        pagination: {
+          page,
+          perPage,
+          totalCount,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPreviousPage: page > 1,
+        },
+      };
+    }
+
+    // With search query - fetch all matching agents
+    const { data: allData, error } = await supabaseAdmin
+      .from("agents")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      logger.error("Failed to fetch agents for search", {
+        error: error,
+        errorMessage: error.message,
+        userId,
+        query,
+      });
+      throw new Error(`Failed to search agents: ${error.message || JSON.stringify(error)}`);
+    }
+
+    // Filter client-side for search
+    const searchLower = query.toLowerCase();
+    const filteredData = (allData || []).filter(
+      (agent) =>
+        agent.name?.toLowerCase().includes(searchLower) ||
+        agent.description?.toLowerCase().includes(searchLower)
+    );
+
+    // Apply pagination
+    const totalCount = filteredData.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
+
+    const paginatedData = filteredData.slice(offset, offset + perPage);
 
     return {
-      agents: data || [],
+      agents: paginatedData,
       pagination: {
         page,
         perPage,
-        totalCount: count || 0,
+        totalCount,
         totalPages,
         hasNextPage: page < totalPages,
         hasPreviousPage: page > 1,
@@ -453,6 +502,232 @@ export class AgentService {
 
     logger.info("Allowed origins updated successfully", { agentId });
     return data;
+  }
+
+  /**
+   * Get system-wide agent statistics (Admin only)
+   * @returns System agent statistics
+   */
+  async getSystemAgentStats(): Promise<{
+    totalAgents: number;
+    publicAgents: number;
+    privateAgents: number;
+    uniqueUsers: number;
+    totalConversations: number;
+    recentAgents: number;
+    totalTenants: number;
+    averageAgentsPerUser: number;
+  }> {
+    logger.info("Getting system-wide agent statistics");
+
+    // Get total agents count
+    const { count: totalAgents, error: totalError } = await supabaseAdmin
+      .from("agents")
+      .select("*", { count: "exact", head: true });
+
+    if (totalError) {
+      logger.error("Failed to get total agents count", { error: totalError.message });
+      throw new Error(`Failed to get total agents count: ${totalError.message}`);
+    }
+
+    // Get public agents count
+    const { count: publicAgents, error: publicError } = await supabaseAdmin
+      .from("agents")
+      .select("*", { count: "exact", head: true })
+      .eq("is_public", true);
+
+    if (publicError) {
+      logger.error("Failed to get public agents count", { error: publicError.message });
+      throw new Error(`Failed to get public agents count: ${publicError.message}`);
+    }
+
+    // Get total users with agents
+    const { data: usersWithAgents, error: usersError } = await supabaseAdmin
+      .from("agents")
+      .select("owner_id")
+      .not("owner_id", "is", null);
+
+    if (usersError) {
+      logger.error("Failed to get users with agents", { error: usersError.message });
+      throw new Error(`Failed to get users with agents: ${usersError.message}`);
+    }
+
+    const uniqueUsers = new Set(usersWithAgents?.map((a) => a.owner_id)).size;
+
+    // Get total analytics/conversations
+    const { count: totalConversations, error: conversationsError } = await supabaseAdmin
+      .from("analytics")
+      .select("*", { count: "exact", head: true });
+
+    if (conversationsError) {
+      logger.error("Failed to get total conversations count", {
+        error: conversationsError.message,
+      });
+      throw new Error(`Failed to get total conversations count: ${conversationsError.message}`);
+    }
+
+    // Get agents created in last 30 days
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const { count: recentAgents, error: recentError } = await supabaseAdmin
+      .from("agents")
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", thirtyDaysAgo.toISOString());
+
+    if (recentError) {
+      logger.error("Failed to get recent agents count", { error: recentError.message });
+      throw new Error(`Failed to get recent agents count: ${recentError.message}`);
+    }
+
+    // Get tenant statistics
+    const { count: totalTenants, error: tenantsError } = await supabaseAdmin
+      .from("tenants")
+      .select("*", { count: "exact", head: true });
+
+    if (tenantsError) {
+      logger.error("Failed to get total tenants count", { error: tenantsError.message });
+      throw new Error(`Failed to get total tenants count: ${tenantsError.message}`);
+    }
+
+    const privateAgents = (totalAgents || 0) - (publicAgents || 0);
+    const averageAgentsPerUser =
+      uniqueUsers > 0 ? Math.round(((totalAgents || 0) / uniqueUsers) * 100) / 100 : 0;
+
+    logger.info("System agent statistics retrieved", {
+      totalAgents,
+      publicAgents,
+      privateAgents,
+      uniqueUsers,
+      totalConversations,
+      recentAgents,
+      totalTenants,
+      averageAgentsPerUser,
+    });
+
+    return {
+      totalAgents: totalAgents || 0,
+      publicAgents: publicAgents || 0,
+      privateAgents,
+      uniqueUsers,
+      totalConversations: totalConversations || 0,
+      recentAgents: recentAgents || 0,
+      totalTenants: totalTenants || 0,
+      averageAgentsPerUser,
+    };
+  }
+
+  /**
+   * Force delete any agent (Admin only - bypasses ownership check)
+   * @param agentId - Agent ID to delete
+   * @returns Deleted agent info
+   */
+  async forceDeleteAgent(agentId: string): Promise<{
+    id: string;
+    name: string;
+    owner_id: string;
+    tenant_id: string;
+  }> {
+    logger.info("Force deleting agent", { agentId });
+
+    // Get agent info before deletion (for logging)
+    const { data: agent, error: fetchError } = await supabaseAdmin
+      .from("agents")
+      .select("id, name, owner_id, tenant_id")
+      .eq("id", agentId)
+      .single();
+
+    if (fetchError || !agent) {
+      logger.error("Agent not found for force delete", { agentId, error: fetchError?.message });
+      throw new Error("Agent not found");
+    }
+
+    // Delete agent (cascades to related records)
+    const { error: deleteError } = await supabaseAdmin.from("agents").delete().eq("id", agentId);
+
+    if (deleteError) {
+      logger.error("Failed to force delete agent", { error: deleteError.message, agentId });
+      throw new Error(`Failed to force delete agent: ${deleteError.message}`);
+    }
+
+    logger.info("Agent force deleted successfully", {
+      agentId,
+      ownerId: agent.owner_id,
+      tenantId: agent.tenant_id,
+    });
+
+    return agent;
+  }
+
+  /**
+   * Get specific user's agents (Admin only)
+   * @param userId - User ID
+   * @param page - Page number
+   * @param perPage - Items per page
+   * @returns User's agents with pagination (includes tenant info)
+   */
+  async getUserAgents(
+    userId: string,
+    page: number = 1,
+    perPage: number = 10
+  ): Promise<AgentListResponse> {
+    logger.info("Getting user's agents", { userId, page, perPage });
+
+    const offset = (page - 1) * perPage;
+
+    // Get user's agents count
+    const { count, error: countError } = await supabaseAdmin
+      .from("agents")
+      .select("*", { count: "exact", head: true })
+      .eq("owner_id", userId);
+
+    if (countError) {
+      logger.error("Failed to count user's agents", { error: countError.message, userId });
+      throw new Error(`Failed to count user's agents: ${countError.message}`);
+    }
+
+    // Get user's agents with pagination (include tenant info)
+    const { data, error } = await supabaseAdmin
+      .from("agents")
+      .select(
+        `
+        *,
+        tenant:tenant_id (
+          id,
+          name,
+          plan
+        )
+      `
+      )
+      .eq("owner_id", userId)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + perPage - 1);
+
+    if (error) {
+      logger.error("Failed to get user's agents", { error: error.message, userId });
+      throw new Error(`Failed to get user's agents: ${error.message}`);
+    }
+
+    const totalCount = count || 0;
+    const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
+
+    logger.info("User agents retrieved", {
+      userId,
+      count: data?.length || 0,
+      totalCount,
+    });
+
+    return {
+      agents: data || [],
+      pagination: {
+        page,
+        perPage,
+        totalCount,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 }
 

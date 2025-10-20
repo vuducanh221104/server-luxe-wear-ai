@@ -42,7 +42,6 @@ Backend server cho ứng dụng Luxe Wear AI - AI-powered fashion assistant vớ
 │  │  ├─ user.service.ts          # User management service
 │  │  ├─ agent.service.ts         # AI agent service
 │  │  ├─ knowledge.service.ts     # Knowledge management service
-│  │  ├─ ai.service.ts            # AI generation service
 │  │  ├─ supabase.service.ts      # Supabase API service
 │  │  ├─ storage.service.ts       # File storage service
 │  │  ├─ tenant.service.ts        # Tenant management service

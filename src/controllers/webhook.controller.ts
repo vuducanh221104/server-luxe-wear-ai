@@ -10,7 +10,12 @@ import { webhookApi } from "../integrations/webhook.api";
 import { successResponse, errorResponse } from "../utils/response";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
 import logger from "../config/logger";
-import type { WebhookProvider, WebhookUpdate } from "../types/webhook";
+import {
+  verifyWebhookSignature,
+  getSignatureHeaderName,
+  getTimestampHeaderName,
+} from "../utils/webhookSignature";
+import type { WebhookProvider, WebhookUpdate, WebhookSignatureConfig } from "../types/webhook";
 
 /**
  * Webhook Controller Class
@@ -295,6 +300,44 @@ export class WebhookController {
           tenantId: req.tenant?.id,
         });
 
+        // Verify signature if secret is configured
+        const webhookSecret = process.env[`WEBHOOK_SECRET_${provider.toUpperCase()}`];
+        if (webhookSecret) {
+          const signatureHeaderName = getSignatureHeaderName(provider);
+          const signature =
+            headers[signatureHeaderName] || headers[signatureHeaderName.toLowerCase()];
+
+          if (!signature) {
+            logger.warn("Missing webhook signature", { provider });
+            return errorResponse(res, "Missing webhook signature", 401);
+          }
+
+          const timestampHeaderName = getTimestampHeaderName(provider);
+          const timestamp = timestampHeaderName
+            ? headers[timestampHeaderName] || headers[timestampHeaderName.toLowerCase()]
+            : undefined;
+
+          const config: WebhookSignatureConfig = {
+            provider,
+            secret: webhookSecret,
+          };
+
+          const verificationResult = verifyWebhookSignature(payload, signature, config, timestamp);
+
+          if (!verificationResult.valid) {
+            logger.warn("Webhook signature verification failed", {
+              provider,
+              error: verificationResult.error,
+            });
+            return errorResponse(res, verificationResult.error || "Invalid signature", 401);
+          }
+
+          logger.info("Webhook signature verified", {
+            provider,
+            timestamp: verificationResult.timestamp,
+          });
+        }
+
         // Process webhook using integration layer
         const result = await webhookApi.processWebhook(provider, payload, headers);
 
@@ -420,6 +463,58 @@ export class WebhookController {
   }
 
   /**
+   * Verify webhook signature
+   * POST /api/webhooks/verify-signature
+   */
+  async verifySignature(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        const { provider, payload, signature, secret } = req.body;
+
+        if (!provider || !payload || !signature || !secret) {
+          return errorResponse(
+            res,
+            "Missing required fields: provider, payload, signature, secret",
+            400
+          );
+        }
+
+        const config: WebhookSignatureConfig = {
+          provider: provider as WebhookProvider,
+          secret,
+        };
+
+        const result = verifyWebhookSignature(payload, signature, config);
+
+        if (result.valid) {
+          return successResponse(
+            res,
+            {
+              valid: true,
+              timestamp: result.timestamp,
+              provider,
+            },
+            "Signature verified successfully"
+          );
+        } else {
+          return errorResponse(res, result.error || "Signature verification failed", 401);
+        }
+      },
+      "verify webhook signature",
+      {
+        context: {
+          provider: req.body?.provider,
+        },
+      }
+    );
+  }
+
+  /**
    * Test webhook
    */
   async testWebhook(req: Request, res: Response): Promise<Response> {
@@ -499,6 +594,7 @@ export const {
   processWebhook,
   getWebhookStats,
   searchWebhooks,
+  verifySignature,
   testWebhook,
 } = webhookController;
 

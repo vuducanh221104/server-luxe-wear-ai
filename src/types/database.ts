@@ -123,33 +123,48 @@ export type Database = {
       knowledge: {
         Row: {
           agent_id: string | null;
-          content: string;
+          // content removed: Text is stored in Pinecone only
           created_at: string | null;
           id: string;
           metadata: Json | null;
           tenant_id: string | null;
           title: string;
           updated_at: string | null;
+          // File-related fields
+          file_url?: string | null;
+          file_type?: string | null;
+          file_size?: number | null;
+          file_name?: string | null;
         };
         Insert: {
           agent_id?: string | null;
-          content: string;
+          // content removed: Text is stored in Pinecone only
           created_at?: string | null;
           id?: string;
           metadata?: Json | null;
           tenant_id?: string | null;
           title: string;
           updated_at?: string | null;
+          // File-related fields
+          file_url?: string | null;
+          file_type?: string | null;
+          file_size?: number | null;
+          file_name?: string | null;
         };
         Update: {
           agent_id?: string | null;
-          content?: string;
+          // content removed: Text is stored in Pinecone only
           created_at?: string | null;
           id?: string;
           metadata?: Json | null;
           tenant_id?: string | null;
           title?: string;
           updated_at?: string | null;
+          // File-related fields
+          file_url?: string | null;
+          file_type?: string | null;
+          file_size?: number | null;
+          file_name?: string | null;
         };
         Relationships: [
           {
