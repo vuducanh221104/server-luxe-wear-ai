@@ -12,7 +12,7 @@ import morgan from "morgan";
 // Middlewares
 import { requestLogger } from "./middlewares/logger.middleware";
 import { errorHandler } from "./middlewares/error.middleware";
-import { securityMiddleware } from "./middlewares/security.middleware";
+import { securityMiddleware } from "./middlewares/logger.middleware";
 import { rateLimiterMiddleware } from "./middlewares/rateLimiter.middleware";
 
 // Routes
@@ -20,6 +20,7 @@ import apiRoutes from "./routes";
 
 // Config
 import logger from "./config/logger";
+import passport from "./config/passport";
 
 /**
  * Creates and configures the Express application
@@ -60,6 +61,13 @@ const createApp = (): Application => {
 
   // Parse URL-encoded bodies
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+  // ===========================
+  // Passport OAuth Authentication
+  // ===========================
+
+  // Initialize Passport
+  app.use(passport.initialize());
 
   // ===========================
   // Logging Middlewares

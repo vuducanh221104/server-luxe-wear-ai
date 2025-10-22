@@ -161,6 +161,61 @@ export class TokenService {
   }
 
   /**
+   * Get token by ID
+   */
+  async getTokenById(tokenId: string): Promise<TokenRecord | null> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from("user_tokens")
+        .select("*")
+        .eq("id", tokenId)
+        .single();
+
+      if (error) {
+        logger.error("Failed to get token by ID", { error: error.message, tokenId });
+        return null;
+      }
+
+      return data;
+    } catch (error) {
+      logger.error("Failed to get token by ID", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        tokenId,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Revoke token by ID
+   */
+  async revokeTokenById(tokenId: string): Promise<boolean> {
+    try {
+      const { error } = await supabaseAdmin
+        .from("user_tokens")
+        .update({
+          is_revoked: true,
+          revoked_at: new Date().toISOString(),
+        })
+        .eq("id", tokenId);
+
+      if (error) {
+        logger.error("Failed to revoke token by ID", { error: error.message, tokenId });
+        return false;
+      }
+
+      logger.info("Token revoked by ID", { tokenId });
+      return true;
+    } catch (error) {
+      logger.error("Failed to revoke token by ID", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        tokenId,
+      });
+      return false;
+    }
+  }
+
+  /**
    * Get user's active tokens
    */
   async getUserActiveTokens(userId: string, tokenType?: string): Promise<TokenRecord[]> {

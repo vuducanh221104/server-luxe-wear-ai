@@ -1,6 +1,7 @@
 /**
  * @file logger.middleware.ts
- * @description Request logging middleware using Winston
+ * @description Request logging and security headers middleware
+ * Includes: Request logging + Security headers
  */
 
 import { Request, Response, NextFunction } from "express";
@@ -10,11 +11,7 @@ import logger from "../config/logger";
  * Request logger middleware
  * Logs incoming requests with method, URL, status, and response time
  */
-export const requestLogger = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
+export const requestLogger = (req: Request, res: Response, next: NextFunction): void => {
   const start = Date.now();
 
   // Log when response finishes
@@ -54,3 +51,23 @@ export const requestLogger = (
 };
 
 export default requestLogger;
+
+// ============================================================================
+// SECURITY HEADERS
+// ============================================================================
+
+/**
+ * Security middleware for additional protections
+ * Adds security headers to responses
+ */
+export const securityMiddleware = (_req: Request, res: Response, next: NextFunction): void => {
+  // Remove X-Powered-By header
+  res.removeHeader("X-Powered-By");
+
+  // Add additional security headers
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+
+  next();
+};

@@ -410,6 +410,148 @@ export class TenantController {
     );
   }
 
+  /**
+   * List tenant members
+   * GET /api/tenants/:tenantId/members
+   * @access User (Tenant Member)
+   */
+  async listTenantMembers(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        const { tenantId } = req.params;
+
+        // Check if user is member of this tenant
+        const isMember = await tenantService.isUserMemberOfTenant(req.user.id, tenantId);
+        if (!isMember) {
+          return errorResponse(res, "Access denied to this tenant", 403);
+        }
+
+        const members = await tenantService.getTenantMembers(tenantId);
+
+        return successResponse(
+          res,
+          {
+            members: members.map(
+              (
+                membership: UserTenantMembership & {
+                  users?: {
+                    id: string;
+                    email: string;
+                    full_name: string;
+                    avatar_url: string | null;
+                  };
+                }
+              ) => ({
+                id: membership.id,
+                userId: membership.user_id,
+                role: membership.role,
+                status: membership.status,
+                joinedAt: membership.joined_at,
+                user: membership.users
+                  ? {
+                      id: membership.users.id,
+                      email: membership.users.email,
+                      fullName: membership.users.full_name,
+                      avatarUrl: membership.users.avatar_url,
+                    }
+                  : null,
+              })
+            ),
+            count: members.length,
+          },
+          "Tenant members retrieved successfully"
+        );
+      },
+      "list tenant members",
+      {
+        context: {
+          userId: req.user?.id,
+          tenantId: req.params.tenantId,
+        },
+      }
+    );
+  }
+
+  /**
+   * Update member role
+   * PUT /api/tenants/:tenantId/members/:userId
+   * @access User (Tenant Owner/Admin)
+   */
+  async updateMemberRole(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        // Check validation results
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        const { tenantId, userId } = req.params;
+        const { role } = req.body;
+
+        // Check if user has permission to update member roles
+        const userRole = await tenantService.getUserRoleInTenant(req.user.id, tenantId);
+        if (!userRole || !["owner", "admin"].includes(userRole)) {
+          return errorResponse(
+            res,
+            "Insufficient permissions to update member roles in this tenant",
+            403
+          );
+        }
+
+        // Admins cannot change owner roles
+        if (userRole === "admin") {
+          const targetUserRole = await tenantService.getUserRoleInTenant(userId, tenantId);
+          if (targetUserRole === "owner" || role === "owner") {
+            return errorResponse(res, "Admins cannot modify owner roles", 403);
+          }
+        }
+
+        // Prevent user from changing their own role
+        if (req.user.id === userId) {
+          return errorResponse(res, "Cannot change your own role", 400);
+        }
+
+        const membership = await tenantService.updateUserRole(tenantId, userId, role);
+
+        return successResponse(
+          res,
+          {
+            id: membership.id,
+            userId: membership.user_id,
+            tenantId: membership.tenant_id,
+            role: membership.role,
+            updatedAt: membership.updated_at,
+          },
+          "Member role updated successfully"
+        );
+      },
+      "update member role",
+      {
+        context: {
+          userId: req.user?.id,
+          tenantId: req.params.tenantId,
+          targetUserId: req.params.userId,
+          newRole: req.body?.role,
+        },
+      }
+    );
+  }
+
   // ===========================
   // Admin Routes (System Administration)
   // ===========================
@@ -481,6 +623,8 @@ export const {
   getTenantStats,
   addUserToTenant,
   removeUserFromTenant,
+  listTenantMembers,
+  updateMemberRole,
   listAllTenants,
 } = tenantController;
 

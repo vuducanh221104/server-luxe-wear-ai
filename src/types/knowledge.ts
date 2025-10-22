@@ -17,6 +17,7 @@ export interface Knowledge {
   metadata: Record<string, unknown>;
   agent_id: string | null;
   tenant_id: string;
+  user_id: string; // Add user_id column
   created_at: string;
   updated_at: string;
   // File-related fields
@@ -36,6 +37,7 @@ export interface KnowledgeInsert {
   metadata?: Record<string, unknown>;
   agent_id?: string | null;
   tenant_id: string;
+  user_id: string; // Add user_id column
   created_at?: string;
   updated_at?: string;
   // File-related fields
@@ -128,55 +130,6 @@ export interface KnowledgeSearchResponse {
 }
 
 /**
- * Knowledge file upload result
- */
-export interface KnowledgeFileUploadResult {
-  file: {
-    originalName: string;
-    size: number;
-    type: string;
-  };
-  extracted: {
-    contentLength: number;
-    wordCount: number;
-    pageCount: number;
-  };
-  knowledge: {
-    chunksCreated: number;
-    entries: Array<{
-      id: string;
-      title: string;
-      contentPreview: string;
-      agentId: string | null;
-      createdAt: string;
-    }>;
-  };
-}
-
-/**
- * Knowledge batch upload result
- */
-export interface KnowledgeBatchUploadResult {
-  filesProcessed: number;
-  totalChunksCreated: number;
-  files: Array<{
-    fileName: string;
-    chunksCreated: number;
-    contentLength: number;
-    wordCount: number;
-  }>;
-  knowledge: {
-    entries: Array<{
-      id: string;
-      title: string;
-      contentPreview: string;
-      agentId: string | null;
-      createdAt: string;
-    }>;
-  };
-}
-
-/**
  * Knowledge chunk data for vector storage
  */
 export interface KnowledgeChunkData {
@@ -230,6 +183,20 @@ export interface KnowledgeVectorSearchResponse {
   results: KnowledgeVectorSearchResult[];
   totalFound: number;
   searchTime: number;
+}
+
+/**
+ * Vector search result (used by vectorizer service)
+ * Generic search result for Pinecone vector operations
+ */
+export interface SearchResult {
+  id: string;
+  score: number;
+  metadata: {
+    content: string;
+    userId?: string;
+    [key: string]: unknown;
+  };
 }
 
 /**

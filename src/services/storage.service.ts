@@ -192,9 +192,16 @@ export class StorageService {
     tenantId: string
   ): Promise<string> {
     try {
+      // Sanitize filename to remove special characters
+      const sanitizedFileName = file.originalname
+        .replace(/[\[\]{}()<>"'|\\]/g, "") // Remove special chars
+        .replace(/\s+/g, "-") // Replace spaces with hyphens
+        .replace(/-+/g, "-") // Remove duplicate hyphens
+        .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
+
       // Generate unique filename
       const timestamp = Date.now();
-      const fileName = `${userId}-${timestamp}-${file.originalname}`;
+      const fileName = `${userId}-${timestamp}-${sanitizedFileName}`;
       // Path: knowledge/{tenantId}/{userId}/{filename}
       const filePath = `knowledge/${tenantId}/${userId}/${fileName}`;
 

@@ -7,7 +7,7 @@ import { Router } from "express";
 import { param, body } from "express-validator";
 import * as tenantController from "../controllers/tenant.controller";
 import { authMiddleware } from "../middlewares/auth.middleware";
-import { adminMiddleware } from "../middlewares/admin.middleware";
+import { adminMiddleware } from "../middlewares/auth.middleware";
 import { strictRateLimiter } from "../middlewares/rateLimiter.middleware";
 
 const router = Router();
@@ -115,6 +115,18 @@ router.get(
 );
 
 /**
+ * GET /api/tenants/:tenantId/members
+ * List tenant members
+ * @access User (Tenant Member)
+ */
+router.get(
+  "/:tenantId/members",
+  authMiddleware,
+  [param("tenantId").isUUID().withMessage("Tenant ID must be a valid UUID")],
+  tenantController.listTenantMembers
+);
+
+/**
  * POST /api/tenants/:tenantId/members
  * Add user to tenant
  * @access User (Tenant Owner/Admin)
@@ -132,6 +144,25 @@ router.post(
       .withMessage("Role must be one of: owner, admin, member"),
   ],
   tenantController.addUserToTenant
+);
+
+/**
+ * PUT /api/tenants/:tenantId/members/:userId
+ * Update member role
+ * @access User (Tenant Owner/Admin)
+ */
+router.put(
+  "/:tenantId/members/:userId",
+  authMiddleware,
+  strictRateLimiter,
+  [
+    param("tenantId").isUUID().withMessage("Tenant ID must be a valid UUID"),
+    param("userId").isUUID().withMessage("User ID must be a valid UUID"),
+    body("role")
+      .isIn(["owner", "admin", "member"])
+      .withMessage("Role must be one of: owner, admin, member"),
+  ],
+  tenantController.updateMemberRole
 );
 
 /**

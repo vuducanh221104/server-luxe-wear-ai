@@ -27,6 +27,7 @@ export const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
   PORT: parseInt(process.env.PORT || "3001", 10),
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS || "*",
+  FRONTEND_URL: process.env.FRONTEND_URL || "http://localhost:3000",
 
   // Supabase
   SUPABASE_URL: requireEnv("SUPABASE_URL"),
@@ -40,6 +41,18 @@ export const env = {
 
   // AI
   GEMINI_API_KEY: requireEnv("GEMINI_API_KEY"),
+
+  // JWT Authentication
+  JWT_SECRET: process.env.JWT_SECRET || "your-secret-key-change-in-production",
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "7d",
+
+  // OAuth Authentication (Optional)
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+  GOOGLE_CALLBACK_URL: process.env.GOOGLE_CALLBACK_URL || "/api/auth/google/callback",
+  GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
+  GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
+  GITHUB_CALLBACK_URL: process.env.GITHUB_CALLBACK_URL || "/api/auth/github/callback",
 
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10), // 15 minutes

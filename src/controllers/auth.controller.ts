@@ -561,6 +561,137 @@ export class AuthController {
       }
     );
   }
+
+  /**
+   * Get user's active sessions
+   * GET /api/auth/sessions
+   * @access Private
+   */
+  async getUserSessions(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        if (!req.user?.id) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        const sessions = await authService.getUserSessions(req.user.id);
+
+        return successResponse(
+          res,
+          {
+            sessions,
+            count: sessions.length,
+          },
+          "User sessions retrieved successfully"
+        );
+      },
+      "get user sessions",
+      {
+        context: {
+          userId: req.user?.id,
+        },
+      }
+    );
+  }
+
+  /**
+   * Logout from all devices
+   * POST /api/auth/logout-all
+   * @access Private
+   */
+  async logoutAll(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        if (!req.user?.id) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        await authService.logoutAll(req.user.id);
+
+        return successResponse(
+          res,
+          { message: "Logged out from all devices successfully" },
+          "Logout from all devices successful"
+        );
+      },
+      "logout all devices",
+      {
+        context: {
+          userId: req.user?.id,
+          ip: req.ip,
+        },
+      }
+    );
+  }
+
+  /**
+   * Revoke a specific session
+   * DELETE /api/auth/sessions/:sessionId
+   * @access Private
+   */
+  async revokeSession(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        if (!req.user?.id) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        const { sessionId } = req.params;
+
+        await authService.revokeSession(sessionId, req.user.id);
+
+        return successResponse(res, null, "Session revoked successfully");
+      },
+      "revoke session",
+      {
+        context: {
+          userId: req.user?.id,
+          sessionId: req.params.sessionId,
+        },
+      }
+    );
+  }
+
+  /**
+   * Check if email is already registered
+   * POST /api/auth/check-email
+   * @access Public
+   */
+  async checkEmailExists(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return errorResponse(res, "Validation failed", 400, errors.array());
+        }
+
+        const { email } = req.body as { email: string };
+
+        const user = await authService.getUserByEmail(email);
+        const exists = !!user;
+
+        return successResponse(
+          res,
+          {
+            exists,
+            available: !exists,
+          },
+          "Email check completed"
+        );
+      },
+      "check email exists",
+      {
+        context: {
+          email: req.body?.email,
+        },
+      }
+    );
+  }
 }
 
 // Create and export controller instance
@@ -580,6 +711,10 @@ export const {
   verifyToken,
   sendTokenVerifyEmail,
   resetPasswordWithToken,
+  getUserSessions,
+  logoutAll,
+  revokeSession,
+  checkEmailExists,
 } = authController;
 
 export default authController;

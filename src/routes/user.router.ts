@@ -20,7 +20,7 @@ import {
   uploadAvatar as uploadAvatarMiddleware,
   handleAvatarUploadError,
   validateAvatarExists,
-} from "../middlewares/avatar.middleware";
+} from "../middlewares/streamingUpload.middleware";
 
 const router = Router();
 

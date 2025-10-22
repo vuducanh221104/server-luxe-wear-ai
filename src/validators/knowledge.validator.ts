@@ -58,24 +58,27 @@ export const updateKnowledgeValidator = [
 ];
 
 /**
- * Validate search knowledge request
+ * Validate search knowledge request (GET query params)
+ * Searches metadata (title, file_name) in Supabase
+ * For semantic/content search, use Agent Chat with RAG
  */
 export const searchKnowledgeValidator = [
-  body("query")
+  query("query")
     .isString()
     .withMessage("Query must be a string")
-    .isLength({ min: 1, max: 1000 })
-    .withMessage("Query must be between 1 and 1000 characters")
+    .isLength({ min: 1, max: 500 })
+    .withMessage("Query must be between 1 and 500 characters")
     .trim()
     .notEmpty()
     .withMessage("Query is required"),
 
-  body("topK")
+  query("limit")
     .optional()
-    .isInt({ min: 1, max: 50 })
-    .withMessage("topK must be an integer between 1 and 50"),
+    .isInt({ min: 1, max: 100 })
+    .withMessage("Limit must be an integer between 1 and 100")
+    .toInt(),
 
-  body("agentId").optional().isUUID().withMessage("Agent ID must be a valid UUID"),
+  query("agentId").optional().isUUID().withMessage("Agent ID must be a valid UUID"),
 ];
 
 /**

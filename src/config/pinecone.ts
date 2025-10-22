@@ -18,6 +18,11 @@ if (!PINECONE_INDEX_NAME) {
 }
 
 /**
+ * Pinecone client instance
+ */
+let pineconeClient: Pinecone | null = null;
+
+/**
  * Pinecone index instance
  */
 let pineconeIndex: Index | null = null;
@@ -28,7 +33,7 @@ let pineconeIndex: Index | null = null;
 export const initializePinecone = async (): Promise<void> => {
   try {
     // Initialize Pinecone client
-    const pineconeClient = new Pinecone({
+    pineconeClient = new Pinecone({
       apiKey: PINECONE_API_KEY,
     });
 
@@ -47,6 +52,16 @@ export const initializePinecone = async (): Promise<void> => {
 };
 
 /**
+ * Get Pinecone client instance for inference operations
+ */
+export const getPineconeClient = (): Pinecone => {
+  if (!pineconeClient) {
+    throw new Error("Pinecone client not initialized. Call initializePinecone() first.");
+  }
+  return pineconeClient;
+};
+
+/**
  * Get Pinecone index instance for vector operations
  */
 export const getPineconeIndex = (): Index => {
@@ -58,5 +73,6 @@ export const getPineconeIndex = (): Index => {
 
 export default {
   initializePinecone,
+  getPineconeClient,
   getPineconeIndex,
 };

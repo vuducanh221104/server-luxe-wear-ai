@@ -6,7 +6,7 @@
 
 import { Router } from "express";
 import * as publicController from "../controllers/public.controller";
-import { apiKeyMiddleware } from "../middlewares/apiKey.middleware";
+import { apiKeyMiddleware } from "../middlewares/auth.middleware";
 import { rateLimiterMiddleware } from "../middlewares/rateLimiter.middleware";
 import {
   publicAgentChatValidator,

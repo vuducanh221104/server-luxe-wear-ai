@@ -6,7 +6,7 @@
 import { Router } from "express";
 import * as analyticsController from "../controllers/analytics.controller";
 import { authMiddleware } from "../middlewares/auth.middleware";
-import { adminMiddleware } from "../middlewares/admin.middleware";
+import { adminMiddleware } from "../middlewares/auth.middleware";
 import { tenantMiddleware } from "../middlewares/tenant.middleware";
 import { param } from "express-validator";
 

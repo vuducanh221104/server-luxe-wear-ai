@@ -171,6 +171,7 @@ export class AgentController {
               name: agent.name,
               description: agent.description,
               config: agent.config,
+              tenant: agent.tenant_id,
               createdAt: agent.created_at,
               updatedAt: agent.updated_at,
             })),
@@ -867,7 +868,7 @@ export class AgentController {
                 description: agent.description,
                 isPublic: agent.is_public,
                 hasApiKey: !!agent.api_key,
-                tenant: agentWithTenant.tenant,
+                tenant: agentWithTenant.tenant_id,
                 createdAt: agent.created_at,
                 updatedAt: agent.updated_at,
               };

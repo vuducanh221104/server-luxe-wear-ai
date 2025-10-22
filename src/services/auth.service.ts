@@ -169,6 +169,36 @@ export class AuthService {
   }
 
   /**
+   * Generate access and refresh tokens for a user
+   * @param userId - User ID
+   * @returns Access token and refresh token
+   */
+  async generateTokens(userId: string): Promise<{ token: string; refreshToken: string }> {
+    try {
+      // Generate access token
+      const token = await this.generateToken(userId);
+
+      // Reuse existing active refresh token if available, otherwise create a new one
+      const activeRefreshTokens = await tokenService.getUserActiveTokens(userId, "refresh");
+      const refreshToken =
+        activeRefreshTokens && activeRefreshTokens.length > 0
+          ? activeRefreshTokens[0].token_value
+          : await this.generateRefreshToken(userId);
+
+      return {
+        token,
+        refreshToken,
+      };
+    } catch (error) {
+      logger.error("Failed to generate tokens", {
+        userId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Verify JWT token
    * @param token - JWT token
    * @returns User data if token is valid
@@ -302,6 +332,67 @@ export class AuthService {
       }));
     } catch (error) {
       logger.error("Failed to get user sessions", {
+        userId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Logout from all devices (revoke all refresh tokens)
+   * @param userId - User ID
+   * @returns Success message
+   */
+  async logoutAll(userId: string): Promise<{ message: string }> {
+    try {
+      // Revoke all refresh tokens for this user
+      await tokenService.revokeAllUserTokens(userId, "refresh");
+
+      logger.info("User logged out from all devices", { userId });
+
+      return {
+        message: "Successfully logged out from all devices",
+      };
+    } catch (error) {
+      logger.error("Failed to logout from all devices", {
+        userId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Revoke a specific session (refresh token)
+   * @param sessionId - Session/Token ID
+   * @param userId - User ID (for security check)
+   * @returns Success message
+   */
+  async revokeSession(sessionId: string, userId: string): Promise<{ message: string }> {
+    try {
+      // Get token to verify ownership
+      const token = await tokenService.getTokenById(sessionId);
+
+      if (!token) {
+        throw new Error("Session not found");
+      }
+
+      if (token.user_id !== userId) {
+        throw new Error("Unauthorized: Cannot revoke another user's session");
+      }
+
+      // Revoke the token
+      await tokenService.revokeTokenById(sessionId);
+
+      logger.info("Session revoked", { sessionId, userId });
+
+      return {
+        message: "Session revoked successfully",
+      };
+    } catch (error) {
+      logger.error("Failed to revoke session", {
+        sessionId,
         userId,
         error: error instanceof Error ? error.message : "Unknown error",
       });

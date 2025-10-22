@@ -17,7 +17,12 @@ import {
   getCacheStats,
   clearCacheByPattern,
 } from "../utils/cache";
-import type { AIServiceConfig } from "../types";
+import type {
+  AIServiceConfig,
+  AIServiceStats,
+  AIHealthCheckResult,
+  SentimentAnalysisResult,
+} from "../types";
 import type { EmbeddingConfig, EmbeddingDimension } from "../types/gemini";
 
 /**
@@ -246,16 +251,7 @@ export class AIService {
    * Health check for AI service
    * @returns Health status
    */
-  async healthCheck(): Promise<{
-    success: boolean;
-    data?: unknown;
-    error?: string;
-    serviceStats: {
-      requestCount: number;
-      cacheStats: { hits: number; misses: number; keys: number; size: number };
-      config: AIServiceConfig;
-    };
-  }> {
+  async healthCheck(): Promise<AIHealthCheckResult> {
     return handleAsyncOperationStrict(
       async () => {
         const result = await this.geminiApi.healthCheck();
@@ -292,11 +288,7 @@ export class AIService {
    * Get service statistics
    * @returns Service stats
    */
-  getStats(): {
-    requestCount: number;
-    cacheStats: { hits: number; misses: number; keys: number; size: number };
-    config: AIServiceConfig;
-  } {
+  getStats(): AIServiceStats {
     return {
       requestCount: this.requestCount,
       cacheStats: getCacheStats(),
@@ -379,14 +371,7 @@ export class AIService {
    * @param userId - User ID for logging
    * @returns Sentiment analysis result
    */
-  async analyzeSentiment(
-    text: string,
-    userId?: string
-  ): Promise<{
-    sentiment: "positive" | "negative" | "neutral";
-    confidence: number;
-    explanation: string;
-  }> {
+  async analyzeSentiment(text: string, userId?: string): Promise<SentimentAnalysisResult> {
     return handleAsyncOperationStrict(async () => {
       logger.info("Analyzing sentiment", {
         textLength: text.length,
@@ -508,21 +493,6 @@ export const defaultAIService = new AIService();
 // ========================================
 
 /**
- * Generate text embeddings with Matryoshka scaling support
- * @param text - Text to convert to vector
- * @param dimension - Target dimension (3072, 1536, 768, etc.)
- * @param useMatryoshka - Whether to use Matryoshka scaling
- * @returns Vector array with specified dimensions
- */
-export const generateEmbeddingWithScaling = async (
-  text: string,
-  dimension: EmbeddingDimension = 1536,
-  useMatryoshka: boolean = true
-): Promise<number[]> => {
-  return await defaultAIService.generateEmbeddingWithScaling(text, dimension, useMatryoshka);
-};
-
-/**
  * Generate text embeddings (vectors) for Pinecone
  * @param text - Text to convert to vector
  * @returns Vector array (1536 dimensions to match Pinecone index)
@@ -596,53 +566,6 @@ export const chatWithRAG = async (
   return await defaultAIService.chatWithRAG(userMessage, userId, systemPrompt, tenantId);
 };
 
-/**
- * Analyze sentiment
- */
-export const analyzeSentiment = async (
-  text: string,
-  userId?: string
-): Promise<{
-  sentiment: "positive" | "negative" | "neutral";
-  confidence: number;
-  explanation: string;
-}> => {
-  return await defaultAIService.analyzeSentiment(text, userId);
-};
-
-/**
- * Extract keywords
- */
-export const extractKeywords = async (
-  text: string,
-  maxKeywords?: number,
-  userId?: string
-): Promise<string[]> => {
-  return await defaultAIService.extractKeywords(text, maxKeywords, userId);
-};
-
-/**
- * Summarize text
- */
-export const summarizeText = async (
-  text: string,
-  maxLength?: number,
-  userId?: string
-): Promise<string> => {
-  return await defaultAIService.summarizeText(text, maxLength, userId);
-};
-
-/**
- * Translate text
- */
-export const translateText = async (
-  text: string,
-  targetLanguage: string,
-  userId?: string
-): Promise<string> => {
-  return await defaultAIService.translateText(text, targetLanguage, userId);
-};
-
 // ========================================
 // DEFAULT EXPORT
 // ========================================
@@ -652,15 +575,10 @@ export default {
 
   // Functional methods
   generateEmbedding,
-  generateEmbeddingWithScaling,
   generateResponse,
   countTokens,
   generateEmbeddingWithCache,
   generateResponseWithCache,
   countTokensWithCache,
   chatWithRAG,
-  analyzeSentiment,
-  extractKeywords,
-  summarizeText,
-  translateText,
 };

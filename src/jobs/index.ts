@@ -5,7 +5,7 @@
 
 import cron from "node-cron";
 import logger from "../config/logger";
-import { tokenCleanupJob } from "./token-cleanup.job";
+import { tokenCleanupJob } from "./tokenCleanup.job";
 
 /**
  * List of scheduled jobs

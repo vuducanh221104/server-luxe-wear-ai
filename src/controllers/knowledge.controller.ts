@@ -13,6 +13,7 @@ import { validationResult } from "express-validator";
 import { successResponse, errorResponse } from "../utils/response";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
 import { knowledgeService } from "../services/knowledge.service";
+import { streamingKnowledgeService } from "../services/streamingKnowledge.service";
 import { AdminKnowledgeEntry } from "../types/knowledge";
 import { v4 as uuidv4 } from "uuid";
 
@@ -46,21 +47,20 @@ export class KnowledgeController {
           return errorResponse(res, "Tenant context not found", 400);
         }
 
-        const { title, metadata, agentId } = req.body;
+        const { title, metadata, agentId } = req.body; // agentId is optional
         const knowledgeId = uuidv4();
 
         // Prepare data for service
-        // Note: Content is stored in Pinecone via file upload, not here
         const knowledgeData = {
           id: knowledgeId,
           title,
-          // content removed: Use file upload endpoint to add content
           metadata: {
             ...metadata,
             userId: req.user.id,
           },
-          agent_id: agentId || null,
+          agent_id: agentId || null, // Optional - can be null for standalone knowledge
           tenant_id: req.tenant.id,
+          user_id: req.user.id, // Required - knowledge belongs to user
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -73,12 +73,10 @@ export class KnowledgeController {
           {
             id: knowledge.id,
             title: knowledge.title,
-            // content removed: Text is stored in Pinecone only
             metadata: knowledge.metadata,
             agentId: knowledge.agent_id,
             createdAt: knowledge.created_at,
             updatedAt: knowledge.updated_at,
-            // File metadata
             fileUrl: knowledge.file_url,
             fileType: knowledge.file_type,
             fileSize: knowledge.file_size,
@@ -126,7 +124,7 @@ export class KnowledgeController {
         const agentId = req.query.agentId as string;
 
         // Use service to get user knowledge
-        const result = await knowledgeService.getUserKnowledge(req.tenant.id, {
+        const result = await knowledgeService.getUserKnowledge(req.user.id, req.tenant.id, {
           page,
           limit: perPage,
           agentId,
@@ -190,7 +188,7 @@ export class KnowledgeController {
         const { id } = req.params;
 
         // Use service to get knowledge by ID
-        const knowledge = await knowledgeService.getKnowledgeById(id, req.tenant.id);
+        const knowledge = await knowledgeService.getKnowledgeById(id, req.user.id, req.tenant.id);
 
         if (!knowledge) {
           return errorResponse(res, "Knowledge entry not found", 404);
@@ -201,12 +199,10 @@ export class KnowledgeController {
           {
             id: knowledge.id,
             title: knowledge.title,
-            // content removed: Text is stored in Pinecone only
             metadata: knowledge.metadata,
             agentId: knowledge.agent_id,
             createdAt: knowledge.created_at,
             updatedAt: knowledge.updated_at,
-            // File metadata
             fileUrl: knowledge.file_url,
             fileType: knowledge.file_type,
             fileSize: knowledge.file_size,
@@ -249,7 +245,7 @@ export class KnowledgeController {
         const { id } = req.params;
 
         // Use service to delete knowledge
-        await knowledgeService.deleteKnowledge(id, req.tenant.id);
+        await knowledgeService.deleteKnowledge(id, req.user.id, req.tenant.id);
 
         return successResponse(res, null, "Knowledge entry deleted successfully");
       },
@@ -291,6 +287,7 @@ export class KnowledgeController {
         const knowledge = await knowledgeService.updateKnowledge(
           id,
           { title, metadata },
+          req.user.id,
           req.tenant.id
         );
 
@@ -325,8 +322,8 @@ export class KnowledgeController {
   }
 
   /**
-   * Search knowledge base using vector similarity
-   * POST /api/knowledge/search
+   * Search knowledge base by metadata (title, filename)
+   * GET /api/knowledge/search
    * @access User + Tenant Context
    */
   async searchKnowledgeBase(req: Request, res: Response): Promise<Response> {
@@ -345,27 +342,27 @@ export class KnowledgeController {
           return errorResponse(res, "Tenant context not found", 400);
         }
 
-        const { query, topK = 5, agentId } = req.body;
+        // Get params from query string
+        const query = req.query.query as string;
+        const limit = parseInt((req.query.limit as string) || "20");
+        const agentId = req.query.agentId as string | undefined;
 
-        // Use service to search knowledge
+        // Search knowledge metadata in Supabase
         const results = await knowledgeService.searchKnowledge(
           query,
           req.user.id,
           req.tenant.id,
-          topK
+          limit,
+          agentId
         );
-
-        // Filter by agent if specified
-        const filteredResults = agentId
-          ? results.filter((result) => result.agentId === agentId)
-          : results;
 
         return successResponse(
           res,
           {
             query,
-            results: filteredResults,
-            totalFound: filteredResults.length,
+            results,
+            totalFound: results.length,
+            searchType: "metadata", // Clarify this is metadata search, not semantic
           },
           "Knowledge search completed successfully"
         );
@@ -374,27 +371,23 @@ export class KnowledgeController {
       {
         context: {
           userId: req.user?.id,
-          queryLength: req.body?.query?.length,
-          topK: req.body?.topK,
-          agentId: req.body?.agentId,
+          queryLength: (req.query?.query as string)?.length,
+          limit: req.query?.limit,
+          agentId: req.query?.agentId,
         },
       }
     );
   }
 
   /**
-   * Upload single file and convert to knowledge
+   * Upload file(s) and convert to knowledge using streaming
    * POST /api/knowledge/upload
-   * @access User
+   * @access User + Tenant Context
+   * @description Handles large file uploads with streaming and progress tracking
    */
-  async uploadFile(req: Request, res: Response): Promise<Response> {
+  async uploadFiles(req: Request, res: Response): Promise<Response> {
     return handleAsyncOperationStrict(
       async () => {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
-        }
-
         if (!req.user) {
           return errorResponse(res, "User not authenticated", 401);
         }
@@ -403,87 +396,72 @@ export class KnowledgeController {
           return errorResponse(res, "Tenant context not found", 400);
         }
 
-        if (!req.file) {
-          return errorResponse(res, "No file provided", 400);
+        // Check if streaming upload session exists
+        if (!req.uploadSession) {
+          return errorResponse(res, "No upload session found", 400);
         }
 
-        const { agentId, title, chunkSize = 1000, overlap = 100 } = req.body;
+        const session = req.uploadSession;
 
-        // Use service to process file upload
-        const result = await knowledgeService.processFileUpload({
-          file: req.file,
-          agentId,
-          title,
-          chunkSize: parseInt(chunkSize),
-          overlap: parseInt(overlap),
-          userId: req.user.id,
-          tenantId: req.tenant.id,
-        });
-
-        return successResponse(res, result, "File uploaded and processed successfully", 201);
-      },
-      "upload file",
-      {
-        context: {
-          userId: req.user?.id,
-          fileName: req.file?.originalname,
-          fileSize: req.file?.size,
-          agentId: req.body?.agentId,
-          chunkSize: req.body?.chunkSize,
-        },
-      }
-    );
-  }
-
-  /**
-   * Upload multiple files and convert to knowledge
-   * POST /api/knowledge/upload/batch
-   * @access User
-   */
-  async uploadMultipleFiles(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
-      async () => {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
+        // Check if upload completed successfully
+        if (!session.completed) {
+          return errorResponse(res, "Upload not completed", 400);
         }
 
-        if (!req.user) {
-          return errorResponse(res, "User not authenticated", 401);
+        if (session.error) {
+          return errorResponse(res, `Upload error: ${session.error}`, 400);
         }
 
-        if (!req.tenant) {
-          return errorResponse(res, "Tenant context not found", 400);
-        }
+        // Get uploaded files
+        const uploadedFiles = Array.from(session.files.values());
 
-        if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+        if (uploadedFiles.length === 0) {
           return errorResponse(res, "No files provided", 400);
         }
 
-        const files = req.files as Express.Multer.File[];
-        const { agentId, chunkSize = 1000, overlap = 100 } = req.body;
-
-        if (files.length > 5) {
-          return errorResponse(res, "Maximum 5 files allowed per batch", 400);
+        // Limit maximum files
+        const MAX_FILES = 20;
+        if (uploadedFiles.length > MAX_FILES) {
+          return errorResponse(res, `Maximum ${MAX_FILES} files allowed per upload`, 400);
         }
 
-        // Use service to process multiple files upload
-        const result = await knowledgeService.processMultipleFilesUpload({
-          files,
-          agentId,
-          chunkSize: parseInt(chunkSize),
-          overlap: parseInt(overlap),
+        const { agentId, title, chunkSize = 5000, overlap = 200 } = req.body;
+
+        // Process files using streaming service
+        const result = await streamingKnowledgeService.processStreamingUpload({
+          files: uploadedFiles,
           userId: req.user.id,
           tenantId: req.tenant.id,
+          agentId: agentId || null,
+          title,
+          chunkSize: parseInt(chunkSize.toString()) || 5000,
+          overlap: parseInt(overlap.toString()) || 200,
         });
 
-        return successResponse(res, result, "Files uploaded and processed successfully", 201);
+        if (!result.success) {
+          return errorResponse(res, "File processing failed", 500, result.errors);
+        }
+
+        return successResponse(
+          res,
+          {
+            sessionId: result.sessionId,
+            filesProcessed: result.filesProcessed,
+            totalChunks: result.totalChunks,
+            totalKnowledgeEntries: result.totalKnowledgeEntries,
+            files: result.files,
+            knowledge: result.knowledge,
+            errors: result.errors,
+          },
+          "Files uploaded and processed successfully",
+          201
+        );
       },
-      "upload multiple files",
+      "upload files",
       {
         context: {
           userId: req.user?.id,
-          fileCount: (req.files as Express.Multer.File[])?.length,
+          fileCount: req.uploadSession?.files.size || 0,
           agentId: req.body?.agentId,
           chunkSize: req.body?.chunkSize,
         },
@@ -614,8 +592,7 @@ export const {
   deleteKnowledge,
   updateKnowledge,
   searchKnowledgeBase,
-  uploadFile,
-  uploadMultipleFiles,
+  uploadFiles,
   getAllKnowledge,
   getKnowledgeStats,
   forceDeleteKnowledge,

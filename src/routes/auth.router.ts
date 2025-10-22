@@ -5,6 +5,8 @@
 
 import { Router } from "express";
 import * as authController from "../controllers/auth.controller";
+import * as oauthController from "../controllers/oauth.controller";
+import passport from "../config/passport";
 import {
   registerValidator,
   loginValidator,
@@ -15,6 +17,8 @@ import {
   verifyEmailValidator,
   requestVerifyEmailValidator,
   resetPasswordWithTokenValidator,
+  checkEmailValidator,
+  revokeSessionValidator,
 } from "../validators/auth.validator";
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { authRateLimiter } from "../middlewares/rateLimiter.middleware";
@@ -127,5 +131,98 @@ router.get("/me", authMiddleware, authController.getCurrentUser);
  * @access Public
  */
 router.post("/verify-token", authController.verifyToken);
+
+/**
+ * GET /api/auth/sessions
+ * Get user's active sessions
+ * @access Private
+ */
+router.get("/sessions", authMiddleware, authController.getUserSessions);
+
+/**
+ * POST /api/auth/logout-all
+ * Logout from all devices
+ * @access Private
+ */
+router.post("/logout-all", authMiddleware, authController.logoutAll);
+
+/**
+ * DELETE /api/auth/sessions/:sessionId
+ * Revoke a specific session
+ * @access Private
+ */
+router.delete(
+  "/sessions/:sessionId",
+  authMiddleware,
+  revokeSessionValidator,
+  authController.revokeSession
+);
+
+/**
+ * POST /api/auth/check-email
+ * Check if email is already registered
+ * @access Public
+ */
+router.post("/check-email", authRateLimiter, checkEmailValidator, authController.checkEmailExists);
+
+// ===========================
+// OAuth Routes
+// ===========================
+
+/**
+ * GET /api/auth/google
+ * Initiate Google OAuth flow
+ * @access Public
+ */
+router.get("/google", passport.authenticate("google", { session: false }));
+
+/**
+ * GET /api/auth/google/callback
+ * Google OAuth callback
+ * @access Public (called by Google)
+ */
+router.get(
+  "/google/callback",
+  passport.authenticate("google", {
+    session: false,
+    failureRedirect: "/api/auth/oauth/failure",
+  }),
+  oauthController.googleCallback
+);
+
+/**
+ * GET /api/auth/github
+ * Initiate GitHub OAuth flow
+ * @access Public
+ */
+router.get("/github", passport.authenticate("github", { session: false }));
+
+/**
+ * GET /api/auth/github/callback
+ * GitHub OAuth callback
+ * @access Public (called by GitHub)
+ */
+router.get(
+  "/github/callback",
+  passport.authenticate("github", {
+    session: false,
+    failureRedirect: "/api/auth/oauth/failure",
+  }),
+  oauthController.githubCallback
+);
+
+/**
+ * GET /api/auth/oauth/failure
+ * OAuth failure handler
+ * @access Public
+ */
+router.get("/oauth/failure", oauthController.oauthFailure);
+
+/**
+ * GET /api/auth/oauth/providers
+ * Get available OAuth providers
+ * @access Public
+ */
+router.get("/oauth/providers", oauthController.getProviders);
 
 export default router;

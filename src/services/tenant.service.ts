@@ -510,6 +510,101 @@ export class TenantService {
   }
 
   /**
+   * List all members of a tenant
+   */
+  async getTenantMembers(tenantId: string): Promise<UserTenantMembership[]> {
+    try {
+      logger.info("Getting tenant members", { tenantId });
+
+      const { data: memberships, error } = await supabaseAdmin
+        .from("user_tenant_memberships")
+        .select(
+          `
+          id,
+          user_id,
+          tenant_id,
+          role,
+          status,
+          joined_at,
+          created_at,
+          updated_at,
+          users!inner (
+            id,
+            email,
+            full_name,
+            avatar_url
+          )
+        `
+        )
+        .eq("tenant_id", tenantId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        throw new Error(`Failed to get tenant members: ${error.message}`);
+      }
+
+      return memberships || [];
+    } catch (error) {
+      logger.error("Get tenant members service error", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        tenantId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Update user's role in tenant
+   */
+  async updateUserRole(
+    tenantId: string,
+    userId: string,
+    newRole: TenantRole
+  ): Promise<UserTenantMembership> {
+    try {
+      logger.info("Updating user role in tenant", {
+        tenantId,
+        userId,
+        newRole,
+      });
+
+      const { data: membership, error } = await supabaseAdmin
+        .from("user_tenant_memberships")
+        .update({
+          role: newRole,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("tenant_id", tenantId)
+        .eq("user_id", userId)
+        .select()
+        .single();
+
+      if (error) {
+        if (error.code === "PGRST116") {
+          throw new Error("User membership not found");
+        }
+        throw new Error(`Failed to update user role: ${error.message}`);
+      }
+
+      logger.info("User role updated successfully", {
+        tenantId,
+        userId,
+        newRole,
+      });
+
+      return membership;
+    } catch (error) {
+      logger.error("Update user role service error", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        tenantId,
+        userId,
+        newRole,
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Create a default tenant for new user
    */
   async createDefaultTenant(userId: string, userEmail: string): Promise<Tenant> {

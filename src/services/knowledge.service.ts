@@ -27,7 +27,26 @@ export class KnowledgeService {
         title: data.title,
         agentId: data.agent_id,
         tenantId: data.tenant_id,
+        userId: data.user_id,
       });
+
+      // Validate agent_id if provided
+      if (data.agent_id) {
+        const { data: agent, error: agentError } = await supabaseAdmin
+          .from("agents")
+          .select("id")
+          .eq("id", data.agent_id)
+          .eq("tenant_id", data.tenant_id)
+          .single();
+
+        if (agentError || !agent) {
+          logger.warn("Agent not found, setting agent_id to null", {
+            agentId: data.agent_id,
+            tenantId: data.tenant_id,
+          });
+          data.agent_id = null; // Set to null if agent doesn't exist
+        }
+      }
 
       // 1. Store in Supabase database
       const { data: knowledge, error } = await supabaseAdmin
@@ -44,19 +63,14 @@ export class KnowledgeService {
         throw new Error(`Failed to create knowledge entry: ${error.message}`);
       }
 
-      // Note: Content is stored in Pinecone only via file upload
-      // This method only creates metadata entries without content
-      // Use processFileUpload() to create knowledge with actual content
-
       logger.info("Knowledge entry created successfully", {
-        knowledgeId: knowledge.id,
+        id: knowledge.id,
         title: knowledge.title,
-        tenantId: knowledge.tenant_id,
       });
 
       return knowledge;
     } catch (error) {
-      logger.error("Create knowledge service error", {
+      logger.error("Failed to create knowledge entry", {
         error: error instanceof Error ? error.message : "Unknown error",
       });
       throw error;
@@ -66,74 +80,74 @@ export class KnowledgeService {
   /**
    * Get knowledge entry by ID
    */
-  async getKnowledgeById(id: string, tenantId?: string): Promise<Knowledge | null> {
+  async getKnowledgeById(id: string, userId: string, tenantId: string): Promise<Knowledge | null> {
     try {
-      let query = supabaseAdmin.from("knowledge").select("*").eq("id", id);
-
-      if (tenantId) {
-        query = query.eq("tenant_id", tenantId);
-      }
-
-      const { data: knowledge, error } = await query.single();
+      const { data, error } = await supabaseAdmin
+        .from("knowledge")
+        .select("*")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .eq("tenant_id", tenantId)
+        .single();
 
       if (error) {
         if (error.code === "PGRST116") {
-          return null; // Not found
+          // Not found
+          return null;
         }
-        throw new Error(`Failed to get knowledge entry: ${error.message}`);
+        throw new Error(error.message);
       }
 
-      return knowledge;
+      return data;
     } catch (error) {
-      logger.error("Get knowledge by ID service error", {
+      logger.error("Failed to get knowledge entry", {
         error: error instanceof Error ? error.message : "Unknown error",
-        knowledgeId: id,
-        tenantId,
+        id,
       });
       throw error;
     }
   }
 
   /**
-   * Get user's knowledge entries with pagination
+   * List knowledge entries with pagination (generic method)
    */
-  async getUserKnowledge(
+  async listKnowledge(
+    userId: string,
     tenantId: string,
-    options: KnowledgeListOptions = {}
+    options: KnowledgeListOptions
   ): Promise<KnowledgeListResponse> {
     try {
-      const { page = 1, limit = 10, agentId } = options;
+      const { agentId, page = 1, limit = 10, search } = options;
       const offset = (page - 1) * limit;
 
-      // Build query
       let query = supabaseAdmin
         .from("knowledge")
         .select("*", { count: "exact" })
-        .eq("tenant_id", tenantId);
+        .eq("user_id", userId)
+        .eq("tenant_id", tenantId)
+        .order("created_at", { ascending: false });
 
-      // Filter by agent if specified
+      // Filter by agent if provided
       if (agentId) {
         query = query.eq("agent_id", agentId);
-      } else {
-        // Show knowledge not tied to specific agents for this tenant
-        query = query.is("agent_id", null);
       }
 
-      const {
-        data: knowledge,
-        error,
-        count,
-      } = await query.order("created_at", { ascending: false }).range(offset, offset + limit - 1);
+      // Search filter
+      if (search) {
+        query = query.or(`title.ilike.%${search}%,metadata->>description.ilike.%${search}%`);
+      }
+
+      const { data, error, count } = await query.range(offset, offset + limit - 1);
 
       if (error) {
-        throw new Error(`Failed to get user knowledge: ${error.message}`);
+        throw new Error(error.message);
       }
 
       const total = count || 0;
       const totalPages = Math.ceil(total / limit);
 
       return {
-        knowledge: knowledge || [],
+        knowledge: data || [],
         pagination: {
           page,
           limit,
@@ -142,9 +156,69 @@ export class KnowledgeService {
         },
       };
     } catch (error) {
-      logger.error("Get user knowledge service error", {
+      logger.error("Failed to list knowledge entries", {
         error: error instanceof Error ? error.message : "Unknown error",
+        userId,
         tenantId,
+        options,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get user knowledge entries (wrapper for listKnowledge)
+   */
+  async getUserKnowledge(
+    userId: string,
+    tenantId: string,
+    options: KnowledgeListOptions
+  ): Promise<KnowledgeListResponse> {
+    return this.listKnowledge(userId, tenantId, options);
+  }
+
+  /**
+   * Get all knowledge entries (admin only)
+   */
+  async getAllKnowledge(options: KnowledgeListOptions): Promise<KnowledgeListResponse> {
+    try {
+      const { page = 1, limit = 10, agentId, search } = options;
+      const offset = (page - 1) * limit;
+
+      let query = supabaseAdmin
+        .from("knowledge")
+        .select("*", { count: "exact" })
+        .order("created_at", { ascending: false });
+
+      if (agentId) {
+        query = query.eq("agent_id", agentId);
+      }
+
+      if (search) {
+        query = query.or(`title.ilike.%${search}%,metadata->>description.ilike.%${search}%`);
+      }
+
+      const { data, error, count } = await query.range(offset, offset + limit - 1);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const total = count || 0;
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        knowledge: data || [],
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+        },
+      };
+    } catch (error) {
+      logger.error("Failed to get all knowledge", {
+        error: error instanceof Error ? error.message : "Unknown error",
         options,
       });
       throw error;
@@ -154,44 +228,62 @@ export class KnowledgeService {
   /**
    * Update knowledge entry
    */
-  async updateKnowledge(id: string, data: KnowledgeUpdate, tenantId: string): Promise<Knowledge> {
+  async updateKnowledge(
+    id: string,
+    updates: KnowledgeUpdate,
+    userId: string,
+    tenantId: string
+  ): Promise<Knowledge> {
     try {
-      // Check if knowledge exists
-      const existingKnowledge = await this.getKnowledgeById(id, tenantId);
-      if (!existingKnowledge) {
-        throw new Error("Knowledge entry not found");
+      // Validate agent_id if provided in updates
+      if (updates.agent_id !== undefined && updates.agent_id !== null) {
+        const { data: agent, error: agentError } = await supabaseAdmin
+          .from("agents")
+          .select("id")
+          .eq("id", updates.agent_id)
+          .eq("tenant_id", tenantId)
+          .single();
+
+        if (agentError || !agent) {
+          logger.warn("Agent not found during update, setting agent_id to null", {
+            agentId: updates.agent_id,
+            tenantId,
+            knowledgeId: id,
+          });
+          updates.agent_id = null; // Set to null if agent doesn't exist
+        }
       }
 
-      // Update in database
-      const { data: knowledge, error } = await supabaseAdmin
+      const { data, error } = await supabaseAdmin
         .from("knowledge")
         .update({
-          ...data,
+          ...updates,
           updated_at: new Date().toISOString(),
         })
         .eq("id", id)
+        .eq("user_id", userId)
         .eq("tenant_id", tenantId)
         .select()
         .single();
 
       if (error) {
-        throw new Error(`Failed to update knowledge entry: ${error.message}`);
+        throw new Error(error.message);
       }
 
-      // Note: Content is stored in Pinecone only, not in database
-      // To update content, delete and re-upload the file
+      if (!data) {
+        throw new Error("Knowledge entry not found");
+      }
 
-      logger.info("Knowledge updated successfully", {
-        knowledgeId: id,
-        tenantId,
+      logger.info("Knowledge entry updated", {
+        id,
+        updates,
       });
 
-      return knowledge;
+      return data;
     } catch (error) {
-      logger.error("Update knowledge service error", {
+      logger.error("Failed to update knowledge entry", {
         error: error instanceof Error ? error.message : "Unknown error",
-        knowledgeId: id,
-        tenantId,
+        id,
       });
       throw error;
     }
@@ -200,12 +292,37 @@ export class KnowledgeService {
   /**
    * Delete knowledge entry
    */
-  async deleteKnowledge(id: string, tenantId: string): Promise<void> {
+  async deleteKnowledge(id: string, userId: string, tenantId: string): Promise<void> {
     try {
-      // Check if knowledge exists
-      const existingKnowledge = await this.getKnowledgeById(id, tenantId);
-      if (!existingKnowledge) {
+      // Get knowledge entry first to verify ownership
+      const knowledge = await this.getKnowledgeById(id, userId, tenantId);
+
+      if (!knowledge) {
         throw new Error("Knowledge entry not found");
+      }
+
+      // Delete from vector database first
+      try {
+        const { deleteKnowledge: deleteFromVector } = await import("./vectorizer.service");
+        await deleteFromVector(id);
+      } catch (vectorError) {
+        logger.warn("Failed to delete from vector database, continuing with database deletion", {
+          id,
+          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
+        });
+      }
+
+      // Delete file from storage if exists
+      if (knowledge.file_url) {
+        try {
+          const { storageService } = await import("./storage.service");
+          await storageService.deleteKnowledgeFile(knowledge.file_url, userId);
+        } catch (storageError) {
+          logger.warn("Failed to delete file from storage", {
+            fileUrl: knowledge.file_url,
+            error: storageError instanceof Error ? storageError.message : "Unknown error",
+          });
+        }
       }
 
       // Delete from database
@@ -213,682 +330,186 @@ export class KnowledgeService {
         .from("knowledge")
         .delete()
         .eq("id", id)
+        .eq("user_id", userId)
         .eq("tenant_id", tenantId);
 
       if (error) {
-        throw new Error(`Failed to delete knowledge entry: ${error.message}`);
+        throw new Error(error.message);
       }
 
-      // Delete from vector database
-      try {
-        const { deleteKnowledge: deleteKnowledgeVector } = await import("./vectorizer.service");
-        await deleteKnowledgeVector(id);
-      } catch (vectorError) {
-        logger.warn("Vector deletion failed", {
-          knowledgeId: id,
-          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-        });
-      }
-
-      logger.info("Knowledge deleted successfully", {
-        knowledgeId: id,
-        title: existingKnowledge.title,
-        tenantId,
-      });
+      logger.info("Knowledge entry deleted", { id });
     } catch (error) {
-      logger.error("Delete knowledge service error", {
+      logger.error("Failed to delete knowledge entry", {
         error: error instanceof Error ? error.message : "Unknown error",
-        knowledgeId: id,
-        tenantId,
+        id,
       });
       throw error;
     }
   }
 
   /**
-   * Search knowledge base using vector similarity
+   * Search knowledge entries
    */
   async searchKnowledge(
     query: string,
     userId: string,
     tenantId: string,
-    topK: number = 5
-  ): Promise<
-    Array<{
-      id: string;
-      score: number;
-      title: string;
-      content: string;
-      metadata: Record<string, unknown>;
-      agentId: string | null;
-      createdAt: string | null;
-      updatedAt: string | null;
-    }>
-  > {
+    limit: number = 20,
+    agentId?: string
+  ): Promise<Knowledge[]> {
     try {
-      // Search using vector similarity
-      const { searchKnowledge: searchKnowledgeVector } = await import("./vectorizer.service");
-      const searchResults = await searchKnowledgeVector(query, userId, tenantId, topK);
+      let dbQuery = supabaseAdmin
+        .from("knowledge")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("tenant_id", tenantId)
+        .or(`title.ilike.%${query}%,metadata->>description.ilike.%${query}%`)
+        .order("created_at", { ascending: false })
+        .limit(limit);
 
-      // Get full knowledge entries from database
-      const knowledgeIds = searchResults.map((result) => result.id);
-
-      let knowledgeEntries: Knowledge[] = [];
-      if (knowledgeIds.length > 0) {
-        const { data, error } = await supabaseAdmin
-          .from("knowledge")
-          .select("*")
-          .in("id", knowledgeIds)
-          .eq("tenant_id", tenantId);
-
-        if (error) {
-          throw new Error(`Failed to get knowledge entries: ${error.message}`);
-        }
-
-        knowledgeEntries = data || [];
+      if (agentId) {
+        dbQuery = dbQuery.eq("agent_id", agentId);
       }
 
-      // Combine search results with database entries
-      const results = searchResults.map((result) => {
-        const dbEntry = knowledgeEntries.find((entry) => entry.id === result.id);
-        return {
-          id: result.id,
-          score: result.score,
-          title: (dbEntry?.title || result.metadata?.title || "Untitled") as string,
-          content: result.metadata?.content || "", // Content is stored in Pinecone metadata
-          metadata: dbEntry?.metadata || result.metadata || {},
-          agentId: (dbEntry?.agent_id || result.metadata?.agentId) as string | null,
-          createdAt: dbEntry?.created_at || null,
-          updatedAt: dbEntry?.updated_at || null,
-        };
-      });
-
-      logger.info("Knowledge search completed", {
-        userId,
-        tenantId,
-        resultsFound: results.length,
-        topScore: results[0]?.score || 0,
-      });
-
-      return results;
-    } catch (error) {
-      logger.error("Search knowledge service error", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        query,
-        userId,
-        tenantId,
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Get all knowledge entries (Admin only)
-   */
-  async getAllKnowledge(options: KnowledgeListOptions = {}): Promise<KnowledgeListResponse> {
-    try {
-      const { page = 1, limit = 10 } = options;
-      const offset = (page - 1) * limit;
-
-      const {
-        data: knowledge,
-        error,
-        count,
-      } = await supabaseAdmin
-        .from("knowledge")
-        .select(
-          `
-          *,
-          agent:agent_id (
-            id,
-            name,
-            owner_id
-          )
-        `,
-          { count: "exact" }
-        )
-        .order("created_at", { ascending: false })
-        .range(offset, offset + limit - 1);
+      const { data, error } = await dbQuery;
 
       if (error) {
-        throw new Error(`Failed to get all knowledge: ${error.message}`);
+        throw new Error(error.message);
       }
 
-      const total = count || 0;
-      const totalPages = Math.ceil(total / limit);
-
-      return {
-        knowledge: knowledge || [],
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages,
-        },
-      };
+      return data || [];
     } catch (error) {
-      logger.error("Get all knowledge service error", {
+      logger.error("Failed to search knowledge", {
         error: error instanceof Error ? error.message : "Unknown error",
-        options,
+        query,
       });
       throw error;
     }
   }
 
   /**
-   * Get knowledge statistics (Admin only)
+   * Get knowledge entries by agent
    */
-  async getKnowledgeStats(): Promise<{
-    totalKnowledge: number;
-    knowledgeWithAgents: number;
-    standaloneKnowledge: number;
-    recentKnowledge: number;
-    // avgContentLength removed: content is in Pinecone, not DB
+  async getKnowledgeByAgent(
+    agentId: string,
+    userId: string,
+    tenantId: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<KnowledgeListResponse> {
+    return this.listKnowledge(userId, tenantId, {
+      agentId,
+      page,
+      limit,
+    });
+  }
+
+  /**
+   * Get knowledge stats for user
+   */
+  async getKnowledgeStats(
+    userId?: string,
+    tenantId?: string
+  ): Promise<{
+    totalEntries: number;
+    totalSize: number;
+    entriesByAgent: Record<string, number>;
   }> {
     try {
-      // Get total knowledge count
-      const { count: totalKnowledge } = await supabaseAdmin
-        .from("knowledge")
-        .select("*", { count: "exact", head: true });
+      let query = supabaseAdmin.from("knowledge").select("id, agent_id, file_size");
 
-      // Get knowledge with agents
-      const { count: knowledgeWithAgents } = await supabaseAdmin
-        .from("knowledge")
-        .select("*", { count: "exact", head: true })
-        .not("agent_id", "is", null);
+      // If userId and tenantId provided, filter by them (user stats)
+      if (userId && tenantId) {
+        query = query.eq("user_id", userId).eq("tenant_id", tenantId);
+      }
+      // Otherwise, get global stats (admin stats)
 
-      // Get knowledge created in last 30 days
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const { data, error } = await query;
 
-      const { count: recentKnowledge } = await supabaseAdmin
-        .from("knowledge")
-        .select("*", { count: "exact", head: true })
-        .gte("created_at", thirtyDaysAgo.toISOString());
+      if (error) {
+        throw new Error(error.message);
+      }
 
-      // Note: Content is stored in Pinecone only, not in database
-      // Average content length cannot be calculated from database
+      const totalEntries = data?.length || 0;
+      const totalSize = data?.reduce((sum, entry) => sum + (entry.file_size || 0), 0) || 0;
+      const entriesByAgent: Record<string, number> = {};
+
+      data?.forEach((entry) => {
+        const agentKey = entry.agent_id || "unassigned";
+        entriesByAgent[agentKey] = (entriesByAgent[agentKey] || 0) + 1;
+      });
 
       return {
-        totalKnowledge: totalKnowledge || 0,
-        knowledgeWithAgents: knowledgeWithAgents || 0,
-        standaloneKnowledge: (totalKnowledge || 0) - (knowledgeWithAgents || 0),
-        recentKnowledge: recentKnowledge || 0,
-        // avgContentLength removed: content is in Pinecone, not DB
+        totalEntries,
+        totalSize,
+        entriesByAgent,
       };
     } catch (error) {
-      logger.error("Get knowledge stats service error", {
+      logger.error("Failed to get knowledge stats", {
         error: error instanceof Error ? error.message : "Unknown error",
+        userId,
+        tenantId,
       });
       throw error;
     }
   }
 
   /**
-   * Force delete knowledge entry (Admin only)
+   * Admin: Force delete knowledge entry
    */
   async forceDeleteKnowledge(id: string): Promise<void> {
     try {
-      // Get knowledge info before deletion (for logging)
-      const { data: knowledge } = await supabaseAdmin
+      // Get knowledge entry
+      const { data: knowledge, error: fetchError } = await supabaseAdmin
         .from("knowledge")
-        .select("id, title, agent_id")
+        .select("*")
         .eq("id", id)
         .single();
+
+      if (fetchError) {
+        throw new Error(fetchError.message);
+      }
 
       if (!knowledge) {
         throw new Error("Knowledge entry not found");
       }
 
-      // Force delete (bypass ownership check)
+      // Delete from vector database
+      try {
+        const { deleteKnowledge: deleteFromVector } = await import("./vectorizer.service");
+        await deleteFromVector(id);
+      } catch (vectorError) {
+        logger.warn("Failed to delete from vector database during force delete", {
+          id,
+          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
+        });
+      }
+
+      // Delete file from storage if exists
+      if (knowledge.file_url && knowledge.user_id) {
+        try {
+          const { storageService } = await import("./storage.service");
+          await storageService.deleteKnowledgeFile(knowledge.file_url, knowledge.user_id);
+        } catch (storageError) {
+          logger.warn("Failed to delete file from storage during force delete", {
+            fileUrl: knowledge.file_url,
+            error: storageError instanceof Error ? storageError.message : "Unknown error",
+          });
+        }
+      }
+
+      // Delete from database
       const { error } = await supabaseAdmin.from("knowledge").delete().eq("id", id);
 
       if (error) {
-        throw new Error(`Failed to force delete knowledge: ${error.message}`);
-      }
-
-      // Delete from vector database
-      try {
-        const { deleteKnowledge: deleteKnowledgeVector } = await import("./vectorizer.service");
-        await deleteKnowledgeVector(id);
-      } catch (vectorError) {
-        logger.warn("Force delete: Vector deletion failed", {
-          knowledgeId: id,
-          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-        });
-      }
-
-      logger.warn("Knowledge force deleted", {
-        knowledgeId: id,
-        title: knowledge.title,
-        agentId: knowledge.agent_id,
-      });
-    } catch (error) {
-      logger.error("Force delete knowledge service error", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        knowledgeId: id,
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Process single file upload and convert to knowledge entries
-   */
-  async processFileUpload(params: {
-    file: Express.Multer.File;
-    agentId?: string;
-    title?: string;
-    chunkSize?: number;
-    overlap?: number;
-    userId: string;
-    tenantId: string;
-  }): Promise<{
-    file: {
-      originalName: string;
-      size: number;
-      type: string;
-      url: string; // Public URL in Supabase Storage
-    };
-    extracted: {
-      contentLength: number;
-      wordCount: number;
-      pageCount: number;
-    };
-    knowledge: {
-      chunksCreated: number;
-      entries: Array<{
-        id: string;
-        title: string;
-        contentPreview: string;
-        agentId: string | null;
-        createdAt: string;
-      }>;
-    };
-  }> {
-    try {
-      const { file, agentId, title, chunkSize = 1000, overlap = 100, userId, tenantId } = params;
-
-      // Import file processing utilities
-      const { extractTextFromFile, chunkText, validateFile } = await import(
-        "../utils/fileProcessor"
-      );
-      const { v4: uuidv4 } = await import("uuid");
-
-      // Validate file
-      const validation = validateFile(file);
-      if (!validation.isValid) {
-        throw new Error(validation.error || "Invalid file");
-      }
-
-      logger.info("File upload started", {
-        fileName: file.originalname,
-        fileSize: file.size,
-        userId,
-        agentId,
-      });
-
-      // 1. Upload file to Supabase Storage first
-      const { storageService } = await import("./storage.service");
-      const fileUrl = await storageService.uploadKnowledgeFile(file, userId, tenantId);
-
-      logger.info("File uploaded to storage", {
-        fileName: file.originalname,
-        fileUrl,
-        userId,
-      });
-
-      // 2. Extract text from file
-      const extractedText = await extractTextFromFile(file);
-
-      // Use provided title or file name
-      const knowledgeTitle = title || extractedText.metadata.fileName.replace(/\.[^/.]+$/, "");
-
-      // Chunk text if it's large
-      const chunks = chunkText(extractedText.content, chunkSize, overlap);
-
-      const knowledgeEntries = [];
-      const vectorEntries = [];
-
-      // Create knowledge entries for each chunk
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkId = uuidv4();
-        const chunkTitle = chunks.length > 1 ? `${knowledgeTitle} (Part ${i + 1})` : knowledgeTitle;
-
-        const knowledgeEntry = {
-          id: chunkId,
-          title: chunkTitle,
-          content: chunks[i],
-          metadata: {
-            ...extractedText.metadata,
-            chunkIndex: i,
-            totalChunks: chunks.length,
-            isFromFile: true,
-          },
-          agent_id: agentId || null,
-          tenant_id: tenantId,
-          // Store file metadata in database
-          file_url: fileUrl,
-          file_type: file.mimetype,
-          file_size: file.size,
-          file_name: file.originalname,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-
-        knowledgeEntries.push(knowledgeEntry);
-
-        vectorEntries.push({
-          id: chunkId,
-          content: chunks[i],
-          metadata: {
-            userId,
-            title: chunkTitle,
-            agentId: agentId || null,
-            tenantId,
-            // Include file info in Pinecone metadata
-            fileUrl,
-            fileName: file.originalname,
-            fileType: file.mimetype,
-            fileSize: file.size,
-            chunkIndex: i,
-            totalChunks: chunks.length,
-            isFromFile: true,
-          },
-        });
-      }
-
-      // Store in database
-      const { data: createdEntries, error } = await supabaseAdmin
-        .from("knowledge")
-        .insert(knowledgeEntries)
-        .select();
-
-      if (error) {
-        // Rollback: Delete uploaded file from storage
-        try {
-          await storageService.deleteKnowledgeFile(fileUrl, userId);
-        } catch (deleteError) {
-          logger.error("Failed to delete file after database error", {
-            fileUrl,
-            error: deleteError instanceof Error ? deleteError.message : "Unknown",
-          });
-        }
-
-        logger.error("File upload database error", {
-          error: error.message,
-          fileName: file.originalname,
-          userId,
-        });
         throw new Error(error.message);
       }
 
-      // Store in vector database
-      try {
-        const { batchStoreKnowledge } = await import("./vectorizer.service");
-        await batchStoreKnowledge(vectorEntries);
-      } catch (vectorError) {
-        // Rollback: Remove from database
-        const ids = knowledgeEntries.map((entry) => entry.id);
-        await supabaseAdmin.from("knowledge").delete().in("id", ids);
-
-        // Rollback: Delete uploaded file from storage
-        try {
-          await storageService.deleteKnowledgeFile(fileUrl, userId);
-        } catch (deleteError) {
-          logger.error("Failed to delete file after vector error", {
-            fileUrl,
-            error: deleteError instanceof Error ? deleteError.message : "Unknown",
-          });
-        }
-
-        logger.error("File upload vector storage failed, rolled back database entries", {
-          fileName: file.originalname,
-          chunksCount: chunks.length,
-          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          userId,
-        });
-        throw new Error("Failed to store file content in vector database");
-      }
-
-      logger.info("File upload completed successfully", {
-        fileName: file.originalname,
-        chunksCreated: chunks.length,
-        totalContentLength: extractedText.content.length,
-        userId,
-        agentId,
-      });
-
-      return {
-        file: {
-          originalName: file.originalname,
-          size: file.size,
-          type: file.mimetype,
-          url: fileUrl, // File URL in storage
-        },
-        extracted: {
-          contentLength: extractedText.content.length,
-          wordCount: extractedText.metadata.wordCount,
-          pageCount: extractedText.metadata.pageCount || 0,
-        },
-        knowledge: {
-          chunksCreated: chunks.length,
-          entries:
-            createdEntries?.map((entry) => ({
-              id: entry.id,
-              title: entry.title,
-              contentPreview: entry.content.substring(0, 100) + "...",
-              agentId: entry.agent_id,
-              fileUrl: entry.file_url, // Include file URL
-              createdAt: entry.created_at,
-            })) || [],
-        },
-      };
+      logger.info("Knowledge entry force deleted", { id });
     } catch (error) {
-      logger.error("Process file upload service error", {
+      logger.error("Failed to force delete knowledge", {
         error: error instanceof Error ? error.message : "Unknown error",
-        fileName: params.file?.originalname,
-        userId: params.userId,
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Process multiple files upload and convert to knowledge entries
-   */
-  async processMultipleFilesUpload(params: {
-    files: Express.Multer.File[];
-    agentId?: string;
-    chunkSize?: number;
-    overlap?: number;
-    userId: string;
-    tenantId: string;
-  }): Promise<{
-    filesProcessed: number;
-    totalChunksCreated: number;
-    files: Array<{
-      fileName: string;
-      chunksCreated: number;
-      contentLength: number;
-      wordCount: number;
-    }>;
-    knowledge: {
-      entries: Array<{
-        id: string;
-        title: string;
-        contentPreview: string;
-        agentId: string | null;
-        createdAt: string;
-      }>;
-    };
-  }> {
-    try {
-      const { files, agentId, chunkSize = 1000, overlap = 100, userId, tenantId } = params;
-
-      // Import file processing utilities
-      const { extractTextFromFile, chunkText, validateFile } = await import(
-        "../utils/fileProcessor"
-      );
-      const { v4: uuidv4 } = await import("uuid");
-
-      if (files.length > 5) {
-        throw new Error("Maximum 5 files allowed per batch");
-      }
-
-      logger.info("Batch file upload started", {
-        fileCount: files.length,
-        fileNames: files.map((f) => f.originalname),
-        userId,
-        agentId,
-      });
-
-      const allKnowledgeEntries = [];
-      const allVectorEntries = [];
-      const processedFiles = [];
-
-      // Process each file
-      for (const file of files) {
-        // Validate file
-        const validation = validateFile(file);
-        if (!validation.isValid) {
-          logger.warn("Skipping invalid file", {
-            fileName: file.originalname,
-            error: validation.error,
-            userId,
-          });
-          continue;
-        }
-
-        try {
-          // Extract text from file
-          const extractedText = await extractTextFromFile(file);
-          const knowledgeTitle = extractedText.metadata.fileName.replace(/\.[^/.]+$/, "");
-
-          // Chunk text if it's large
-          const chunks = chunkText(extractedText.content, chunkSize, overlap);
-
-          // Create knowledge entries for each chunk
-          for (let i = 0; i < chunks.length; i++) {
-            const chunkId = uuidv4();
-            const chunkTitle =
-              chunks.length > 1 ? `${knowledgeTitle} (Part ${i + 1})` : knowledgeTitle;
-
-            const knowledgeEntry = {
-              id: chunkId,
-              title: chunkTitle,
-              content: chunks[i],
-              metadata: {
-                ...extractedText.metadata,
-                chunkIndex: i,
-                totalChunks: chunks.length,
-                isFromFile: true,
-              },
-              agent_id: agentId || null,
-              tenant_id: tenantId,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
-
-            allKnowledgeEntries.push(knowledgeEntry);
-
-            allVectorEntries.push({
-              id: chunkId,
-              content: chunks[i],
-              metadata: {
-                userId,
-                title: chunkTitle,
-                agentId: agentId || null,
-                fileName: extractedText.metadata.fileName,
-                fileType: extractedText.metadata.fileType,
-                chunkIndex: i,
-                totalChunks: chunks.length,
-                isFromFile: true,
-              },
-            });
-          }
-
-          processedFiles.push({
-            fileName: file.originalname,
-            chunksCreated: chunks.length,
-            contentLength: extractedText.content.length,
-            wordCount: extractedText.metadata.wordCount,
-          });
-        } catch (fileError) {
-          logger.error("Failed to process file in batch", {
-            fileName: file.originalname,
-            error: fileError instanceof Error ? fileError.message : "Unknown error",
-            userId,
-          });
-          // Continue with other files
-        }
-      }
-
-      if (allKnowledgeEntries.length === 0) {
-        throw new Error("No files could be processed successfully");
-      }
-
-      // Store in database
-      const { data: createdEntries, error } = await supabaseAdmin
-        .from("knowledge")
-        .insert(allKnowledgeEntries)
-        .select();
-
-      if (error) {
-        logger.error("Batch file upload database error", {
-          error: error.message,
-          fileCount: files.length,
-          userId,
-        });
-        throw new Error(error.message);
-      }
-
-      // Store in vector database
-      try {
-        const { batchStoreKnowledge } = await import("./vectorizer.service");
-        await batchStoreKnowledge(allVectorEntries);
-      } catch (vectorError) {
-        // If vector storage fails, remove from database
-        const ids = allKnowledgeEntries.map((entry) => entry.id);
-        await supabaseAdmin.from("knowledge").delete().in("id", ids);
-
-        logger.error("Batch file upload vector storage failed, rolled back database entries", {
-          fileCount: files.length,
-          chunksCount: allKnowledgeEntries.length,
-          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-          userId,
-        });
-        throw new Error("Failed to store file contents in vector database");
-      }
-
-      logger.info("Batch file upload completed successfully", {
-        fileCount: files.length,
-        totalChunksCreated: allKnowledgeEntries.length,
-        processedFiles: processedFiles.length,
-        userId,
-        agentId,
-      });
-
-      return {
-        filesProcessed: processedFiles.length,
-        totalChunksCreated: allKnowledgeEntries.length,
-        files: processedFiles,
-        knowledge: {
-          entries:
-            createdEntries?.map((entry) => ({
-              id: entry.id,
-              title: entry.title,
-              contentPreview: entry.content.substring(0, 100) + "...",
-              agentId: entry.agent_id,
-              createdAt: entry.created_at,
-            })) || [],
-        },
-      };
-    } catch (error) {
-      logger.error("Process multiple files upload service error", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        fileCount: params.files?.length,
-        userId: params.userId,
+        knowledgeId: id,
       });
       throw error;
     }

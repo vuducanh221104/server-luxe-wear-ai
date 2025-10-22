@@ -64,9 +64,14 @@ export const testSupabaseConnection = async (): Promise<void> => {
 
     logger.info("Supabase connection test successful");
   } catch (error) {
+    const errorCode =
+      error instanceof Error && "code" in error
+        ? (error as Error & { code: string }).code
+        : undefined;
+
     logger.error("Supabase connection test failed", {
       error: error instanceof Error ? error.message : "Unknown error",
-      errorCode: error instanceof Error && "code" in error ? (error as any).code : undefined,
+      errorCode,
       hint: "Check your SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env file",
     });
 

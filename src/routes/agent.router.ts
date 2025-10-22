@@ -16,7 +16,7 @@ import {
   getUserAgentsValidator,
 } from "../validators/agent.validator";
 import { authMiddleware } from "../middlewares/auth.middleware";
-import { adminMiddleware } from "../middlewares/admin.middleware";
+import { adminMiddleware } from "../middlewares/auth.middleware";
 import { strictRateLimiter } from "../middlewares/rateLimiter.middleware";
 import { tenantMiddleware } from "../middlewares/tenant.middleware";
 

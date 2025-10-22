@@ -3,7 +3,7 @@
  * @description Validation schemas for authentication endpoints
  */
 
-import { body, ValidationChain } from "express-validator";
+import { body, param, ValidationChain } from "express-validator";
 
 /**
  * Validator for user registration
@@ -139,4 +139,29 @@ export const resetPasswordWithTokenValidator: ValidationChain[] = [
     .withMessage(
       "New password must contain at least one uppercase letter, one lowercase letter, and one number"
     ),
+];
+
+/**
+ * Validator for checking email availability
+ */
+export const checkEmailValidator: ValidationChain[] = [
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Email must be valid")
+    .normalizeEmail(),
+];
+
+/**
+ * Validator for revoking a specific session
+ */
+export const revokeSessionValidator: ValidationChain[] = [
+  param("sessionId")
+    .trim()
+    .notEmpty()
+    .withMessage("Session ID is required")
+    .isUUID()
+    .withMessage("Session ID must be a valid UUID"),
 ];

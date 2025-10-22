@@ -13,22 +13,18 @@ import {
   deleteKnowledgeValidator,
   searchKnowledgeEndpointValidator,
   uploadFileEndpointValidator,
-  uploadMultipleFilesEndpointValidator,
   knowledgeListValidator,
   paginationValidator,
   knowledgeIdValidator,
 } from "../validators/knowledge.validator";
 import { authMiddleware } from "../middlewares/auth.middleware";
-import { adminMiddleware } from "../middlewares/admin.middleware";
+import { adminMiddleware } from "../middlewares/auth.middleware";
 import { strictRateLimiter, rateLimiterMiddleware } from "../middlewares/rateLimiter.middleware";
 import { tenantMiddleware } from "../middlewares/tenant.middleware";
 import {
-  uploadSingleFile,
-  uploadMultipleFiles,
-  handleUploadError,
-  validateFileExists,
-  logFileUpload,
-} from "../middlewares/upload.middleware";
+  streamingUploadMiddleware,
+  getUploadProgress,
+} from "../middlewares/streamingUpload.middleware";
 
 const router = Router();
 
@@ -61,6 +57,35 @@ router.get(
   tenantMiddleware,
   knowledgeListValidator,
   knowledgeController.getUserKnowledge
+);
+
+/**
+ * GET /api/knowledge/search
+ * Search knowledge base by METADATA (title, filename)
+ *
+ * Query params:
+ * - query: Search term (required, 1-500 chars)
+ * - limit: Max results (optional, default 20, max 100)
+ * - agentId: Filter by agent (optional, UUID)
+ *
+ * Searches: title (document name), file_name (original filename)
+ * This is for DOCUMENT MANAGEMENT, NOT content search.
+ *
+ * For SEMANTIC/CONTENT SEARCH (AI-powered RAG), use Agent Chat instead:
+ *   POST /api/agents/:agentId/chat
+ *
+ * Agent Chat automatically searches knowledge CONTENT via Pinecone vector database
+ * and generates contextual AI responses using RAG (Retrieval Augmented Generation).
+ *
+ * @access User + Tenant Context
+ */
+router.get(
+  "/search",
+  authMiddleware,
+  tenantMiddleware,
+  rateLimiterMiddleware,
+  searchKnowledgeEndpointValidator,
+  knowledgeController.searchKnowledgeBase
 );
 
 /**
@@ -105,53 +130,44 @@ router.delete(
 );
 
 /**
- * POST /api/knowledge/search
- * Search knowledge base using vector similarity
- * @access User + Tenant Context
- */
-router.post(
-  "/search",
-  authMiddleware,
-  tenantMiddleware,
-  rateLimiterMiddleware,
-  searchKnowledgeEndpointValidator,
-  knowledgeController.searchKnowledgeBase
-);
-
-/**
  * POST /api/knowledge/upload
- * Upload single file and convert to knowledge
+ * Upload file(s) and convert to knowledge using streaming
  * @access User + Tenant Context
+ * @description Handles large file uploads with streaming and progress tracking
  */
 router.post(
   "/upload",
   authMiddleware,
   tenantMiddleware,
   strictRateLimiter,
-  uploadSingleFile,
-  handleUploadError,
-  validateFileExists,
-  logFileUpload,
+  streamingUploadMiddleware,
   uploadFileEndpointValidator,
-  knowledgeController.uploadFile
+  knowledgeController.uploadFiles
 );
 
 /**
- * POST /api/knowledge/upload/batch
- * Upload multiple files and convert to knowledge
- * @access User
+ * GET /api/knowledge/upload/progress/:sessionId
+ * Get upload progress for a session
+ * @access User + Tenant Context
  */
-router.post(
-  "/upload/batch",
-  authMiddleware,
-  strictRateLimiter,
-  uploadMultipleFiles,
-  handleUploadError,
-  validateFileExists,
-  logFileUpload,
-  uploadMultipleFilesEndpointValidator,
-  knowledgeController.uploadMultipleFiles
-);
+router.get("/upload/progress/:sessionId", authMiddleware, tenantMiddleware, (req, res) => {
+  const { sessionId } = req.params;
+  const progress = getUploadProgress(sessionId);
+
+  if (!progress) {
+    return res.status(404).json({
+      success: false,
+      message: "Upload session not found",
+      error: "SESSION_NOT_FOUND",
+    });
+  }
+
+  return res.json({
+    success: true,
+    sessionId,
+    progress,
+  });
+});
 
 // ===========================
 // Admin Routes (System Administration)
