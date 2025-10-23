@@ -35,3 +35,6 @@ export * from "./knowledge";
 
 // Token types
 export * from "./token";
+
+// Upload types
+export * from "./upload";

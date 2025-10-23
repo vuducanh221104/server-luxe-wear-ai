@@ -47,6 +47,20 @@ export interface UserTenantMembership {
 }
 
 /**
+ * User tenant membership with full tenant details
+ */
+export interface UserTenantMembershipWithTenant extends UserTenantMembership {
+  tenant: {
+    id: string;
+    name: string;
+    plan: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  } | null;
+}
+
+/**
  * Tenant role types (same as UserRole for consistency)
  * Used in user_tenant_memberships table
  */

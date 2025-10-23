@@ -12,7 +12,7 @@ import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { agentService } from "../services/agent.service";
 import { successResponse, errorResponse } from "../utils/response";
-import { chatWithRAG } from "../services/vectorizer.service";
+import { chatWithRAG } from "../services/rag.service";
 import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";

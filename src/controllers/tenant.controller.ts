@@ -142,11 +142,11 @@ export class TenantController {
         return successResponse(
           res,
           {
-            tenants: memberships.map((membership: UserTenantMembership) => ({
+            tenants: memberships.map((membership) => ({
               id: membership.tenant_id,
-              name: "Unknown", // Will be populated by service
-              plan: "free",
-              status: "active",
+              name: membership.tenant?.name || "Unknown",
+              plan: membership.tenant?.plan || "free",
+              status: membership.tenant?.status || "active",
               role: membership.role,
               joinedAt: membership.joined_at,
               createdAt: membership.created_at,

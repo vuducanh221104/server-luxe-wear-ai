@@ -92,30 +92,6 @@ export interface HealthCheckData {
 }
 
 /**
- * Embedding generation input types
- */
-export type EmbeddingInput = string | string[];
-
-/**
- * Embedding generation output types
- */
-export type EmbeddingOutput = number[] | number[][];
-
-/**
- * Embedding dimension options for Matryoshka scaling
- */
-export type EmbeddingDimension = 3072 | 1536 | 768 | 512 | 256 | 128;
-
-/**
- * Embedding configuration with Matryoshka support
- */
-export interface EmbeddingConfig {
-  model: string;
-  dimension: EmbeddingDimension;
-  useMatryoshka?: boolean;
-}
-
-/**
  * Gemini model types
  */
 export type GeminiModelType =
@@ -140,7 +116,6 @@ export enum NonRetryableErrorType {
  */
 export type GeminiOperation =
   | "generateContent"
-  | "generateEmbeddings"
   | "countTokens"
   | "generateRAGResponse"
   | "healthCheck";

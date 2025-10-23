@@ -11,7 +11,6 @@ import {
   handleAsyncOperationWithFallback,
 } from "../utils/errorHandler";
 import {
-  getCachedEmbedding,
   getCachedAIResponse,
   getCachedTokenCount,
   getCacheStats,
@@ -23,7 +22,6 @@ import type {
   AIHealthCheckResult,
   SentimentAnalysisResult,
 } from "../types";
-import type { EmbeddingConfig, EmbeddingDimension } from "../types/gemini";
 
 /**
  * AI Service Class
@@ -48,86 +46,6 @@ export class AIService {
       enableCaching: this.config.enableCaching,
       defaultSystemPrompt: this.config.defaultSystemPrompt,
     });
-  }
-
-  /**
-   * Generate text embeddings with Matryoshka scaling support
-   * @param text - Text to convert to vector
-   * @param dimension - Target dimension (3072, 1536, 768, etc.)
-   * @param useMatryoshka - Whether to use Matryoshka scaling
-   * @param userId - User ID for logging and caching
-   * @returns Vector array with specified dimensions
-   */
-  async generateEmbeddingWithScaling(
-    text: string,
-    dimension: EmbeddingDimension = 1536,
-    useMatryoshka: boolean = true,
-    userId?: string
-  ): Promise<number[]> {
-    return handleAsyncOperationStrict(
-      async () => {
-        const config: EmbeddingConfig = {
-          model: this.geminiApi.getConfig().embeddingModel,
-          dimension,
-          useMatryoshka,
-        };
-
-        logger.info("Generating scaled embedding", {
-          textLength: text.length,
-          dimension,
-          useMatryoshka,
-          userId,
-          enableCaching: this.config.enableCaching,
-        });
-
-        if (this.config.enableCaching) {
-          // Use centralized cache utility with dimension-specific cache key
-          const cacheKey = `embedding:${dimension}:${text}`;
-          return await getCachedEmbedding(cacheKey, async () => {
-            const result = await this.geminiApi.generateEmbeddingsWithScaling(text, config);
-            if (!result.success || !result.data) {
-              throw new Error(result.error || "Failed to generate embedding");
-            }
-            return result.data as number[];
-          });
-        }
-
-        // Direct call without caching
-        const result = await this.geminiApi.generateEmbeddingsWithScaling(text, config);
-        if (!result.success || !result.data) {
-          throw new Error(result.error || "Failed to generate embedding");
-        }
-        return result.data as number[];
-      },
-      "generate text embedding with scaling",
-      {
-        context: {
-          textLength: text.length,
-          dimension,
-          useMatryoshka,
-          enableCaching: this.config.enableCaching,
-        },
-      }
-    );
-  }
-
-  /**
-   * Generate text embeddings (vectors) for Pinecone
-   * @param text - Text to convert to vector
-   * @param userId - User ID for logging and caching
-   * @returns Vector array (1536 dimensions to match Pinecone index)
-   */
-  async generateEmbedding(text: string, userId?: string): Promise<number[]> {
-    return handleAsyncOperationStrict(async () => {
-      logger.info("Generating embedding", {
-        textLength: text.length,
-        userId,
-        enableCaching: this.config.enableCaching,
-      });
-
-      // Use 1536 dimensions for optimal accuracy (matches Pinecone index)
-      return this.generateEmbeddingWithScaling(text, 1536, true);
-    }, "generate embedding");
   }
 
   /**
@@ -331,41 +249,6 @@ export class AIService {
   }
 
   /**
-   * Chat with AI using RAG pattern
-   * @param userMessage - User's message
-   * @param userId - User ID for knowledge filtering
-   * @param systemPrompt - System instructions
-   * @param tenantId - Tenant ID for multi-tenancy
-   * @returns AI response with relevant context
-   */
-  async chatWithRAG(
-    userMessage: string,
-    userId: string,
-    systemPrompt?: string,
-    tenantId?: string
-  ): Promise<string> {
-    return handleAsyncOperationStrict(async () => {
-      logger.info("Starting RAG chat", {
-        userId,
-        tenantId,
-        messageLength: userMessage.length,
-      });
-
-      // This would integrate with knowledge service to get relevant context
-      // For now, using empty context - in real implementation, this would:
-      // 1. Generate embedding for user message
-      // 2. Search knowledge base for relevant content
-      // 3. Build context from search results
-      // 4. Generate AI response with context
-
-      const context = ""; // Would be populated by knowledge service
-      const prompt = systemPrompt || this.config.defaultSystemPrompt!;
-
-      return await this.generateResponse(userMessage, context, prompt);
-    }, "chat with RAG");
-  }
-
-  /**
    * Analyze text sentiment
    * @param text - Text to analyze
    * @param userId - User ID for logging
@@ -488,19 +371,6 @@ export class AIService {
 // ========================================
 export const defaultAIService = new AIService();
 
-// ========================================
-// FUNCTIONAL EXPORTS FOR CONVENIENCE
-// ========================================
-
-/**
- * Generate text embeddings (vectors) for Pinecone
- * @param text - Text to convert to vector
- * @returns Vector array (1536 dimensions to match Pinecone index)
- */
-export const generateEmbedding = async (text: string): Promise<number[]> => {
-  return await defaultAIService.generateEmbedding(text);
-};
-
 /**
  * Generate AI response with context from Pinecone (RAG pattern)
  * @param userMessage - User's question/message
@@ -526,16 +396,6 @@ export const countTokens = async (text: string): Promise<number> => {
 };
 
 /**
- * Generate embedding with caching
- */
-export const generateEmbeddingWithCache = async (
-  text: string,
-  userId?: string
-): Promise<number[]> => {
-  return await defaultAIService.generateEmbedding(text, userId);
-};
-
-/**
  * Generate AI response with caching
  */
 export const generateResponseWithCache = async (
@@ -554,18 +414,6 @@ export const countTokensWithCache = async (text: string, userId?: string): Promi
   return await defaultAIService.countTokens(text, userId);
 };
 
-/**
- * Chat with RAG
- */
-export const chatWithRAG = async (
-  userMessage: string,
-  userId: string,
-  systemPrompt?: string,
-  tenantId?: string
-): Promise<string> => {
-  return await defaultAIService.chatWithRAG(userMessage, userId, systemPrompt, tenantId);
-};
-
 // ========================================
 // DEFAULT EXPORT
 // ========================================
@@ -574,11 +422,8 @@ export default {
   defaultAIService,
 
   // Functional methods
-  generateEmbedding,
   generateResponse,
   countTokens,
-  generateEmbeddingWithCache,
   generateResponseWithCache,
   countTokensWithCache,
-  chatWithRAG,
 };

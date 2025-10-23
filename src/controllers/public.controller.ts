@@ -7,7 +7,7 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { successResponse, errorResponse } from "../utils/response";
-import { chatWithRAG } from "../services/vectorizer.service";
+import { chatWithRAG } from "../services/rag.service";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
 import logger from "../config/logger";
 import { supabaseAdmin } from "../config/supabase";

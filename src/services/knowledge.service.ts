@@ -303,7 +303,7 @@ export class KnowledgeService {
 
       // Delete from vector database first
       try {
-        const { deleteKnowledge: deleteFromVector } = await import("./vectorizer.service");
+        const { deleteKnowledge: deleteFromVector } = await import("./vector.service");
         await deleteFromVector(id);
       } catch (vectorError) {
         logger.warn("Failed to delete from vector database, continuing with database deletion", {
@@ -476,7 +476,7 @@ export class KnowledgeService {
 
       // Delete from vector database
       try {
-        const { deleteKnowledge: deleteFromVector } = await import("./vectorizer.service");
+        const { deleteKnowledge: deleteFromVector } = await import("./vector.service");
         await deleteFromVector(id);
       } catch (vectorError) {
         logger.warn("Failed to delete from vector database during force delete", {

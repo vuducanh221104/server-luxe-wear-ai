@@ -7,9 +7,9 @@
 import { v4 as uuidv4 } from "uuid";
 import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
-import { StreamingFile } from "../middlewares/streamingUpload.middleware";
+import { StreamingFile } from "../types/upload";
 import { processMultipleStreamingFiles } from "../utils/streamingFileProcessor";
-import { batchStoreKnowledge } from "./vectorizer.service";
+import { batchStoreKnowledge } from "./vector.service";
 import { storageService } from "./storage.service";
 
 // Interface for streaming upload parameters

@@ -4,7 +4,7 @@
  */
 
 import { Router } from "express";
-import { param, body } from "express-validator";
+import { param, body, query } from "express-validator";
 import * as tenantController from "../controllers/tenant.controller";
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { adminMiddleware } from "../middlewares/auth.middleware";
@@ -48,6 +48,41 @@ router.post(
  * @access User (Tenant Member)
  */
 router.get("/", authMiddleware, tenantController.listUserTenants);
+
+// ===========================
+// Admin Routes (Must be before /:tenantId)
+// ===========================
+
+/**
+ * GET /api/tenants/admin/all
+ * List all tenants with pagination
+ * @access Admin
+ */
+router.get(
+  "/admin/all",
+  authMiddleware,
+  adminMiddleware,
+  [
+    query("page").optional().isInt({ min: 1 }).withMessage("Page must be a positive integer"),
+    query("perPage")
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage("Per page must be between 1 and 100"),
+    query("status")
+      .optional()
+      .isIn(["active", "inactive", "suspended"])
+      .withMessage("Status must be one of: active, inactive, suspended"),
+    query("plan")
+      .optional()
+      .isIn(["free", "pro", "enterprise"])
+      .withMessage("Plan must be one of: free, pro, enterprise"),
+  ],
+  tenantController.listAllTenants
+);
+
+// ===========================
+// Tenant Routes (Dynamic ID)
+// ===========================
 
 /**
  * GET /api/tenants/:tenantId
@@ -179,37 +214,6 @@ router.delete(
     param("userId").isUUID().withMessage("User ID must be a valid UUID"),
   ],
   tenantController.removeUserFromTenant
-);
-
-// ===========================
-// Admin Routes (System Administration)
-// ===========================
-
-/**
- * GET /api/tenants/admin/all
- * List all tenants with pagination
- * @access Admin
- */
-router.get(
-  "/admin/all",
-  authMiddleware,
-  adminMiddleware,
-  [
-    param("page").optional().isInt({ min: 1 }).withMessage("Page must be a positive integer"),
-    param("perPage")
-      .optional()
-      .isInt({ min: 1, max: 100 })
-      .withMessage("Per page must be between 1 and 100"),
-    param("status")
-      .optional()
-      .isIn(["active", "inactive", "suspended"])
-      .withMessage("Status must be one of: active, inactive, suspended"),
-    param("plan")
-      .optional()
-      .isIn(["free", "pro", "enterprise"])
-      .withMessage("Plan must be one of: free, pro, enterprise"),
-  ],
-  tenantController.listAllTenants
 );
 
 export default router;

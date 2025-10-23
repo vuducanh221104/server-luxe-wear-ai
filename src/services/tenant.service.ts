@@ -13,7 +13,7 @@ import {
   TenantStats,
   UserTenantRPCResult,
 } from "../types/tenant";
-import { TenantRole, UserTenantMembership } from "../types/user";
+import { TenantRole, UserTenantMembership, UserTenantMembershipWithTenant } from "../types/user";
 import { MembershipStatus } from "../types/user";
 
 /**
@@ -377,7 +377,7 @@ export class TenantService {
   /**
    * Get user's tenant memberships
    */
-  async getUserTenants(userId: string): Promise<UserTenantMembership[]> {
+  async getUserTenants(userId: string): Promise<UserTenantMembershipWithTenant[]> {
     try {
       // Use raw SQL query for better control
       const { data: userTenants, error } = await supabaseAdmin.rpc("get_user_tenants", {
@@ -531,7 +531,7 @@ export class TenantService {
           users!inner (
             id,
             email,
-            full_name,
+            name,
             avatar_url
           )
         `

@@ -6,22 +6,7 @@
 
 import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
-
-/**
- * Supported image types for avatar upload
- */
-export const SUPPORTED_IMAGE_TYPES = {
-  JPEG: "image/jpeg",
-  JPG: "image/jpg",
-  PNG: "image/png",
-  WEBP: "image/webp",
-  GIF: "image/gif",
-} as const;
-
-/**
- * Maximum file size for avatars (5MB)
- */
-export const MAX_AVATAR_SIZE = 5 * 1024 * 1024; // 5MB
+import { SUPPORTED_IMAGE_TYPES, MAX_AVATAR_SIZE } from "../types/upload";
 
 /**
  * Storage Service Class

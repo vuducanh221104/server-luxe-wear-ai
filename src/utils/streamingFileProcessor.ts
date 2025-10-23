@@ -5,7 +5,7 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
-import { StreamingFile } from "../middlewares/streamingUpload.middleware";
+import { StreamingFile } from "../types/upload";
 import logger from "../config/logger";
 
 // Define supported file types locally
