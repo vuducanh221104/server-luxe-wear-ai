@@ -8,15 +8,14 @@ import logger from "../config/logger";
 /**
  * Handle unhandled promise rejections
  */
-export const handleUnhandledRejection = (reason: any, promise: Promise<any>) => {
+export const handleUnhandledRejection = (reason: unknown, promise: Promise<unknown>): void => {
   logger.error("Unhandled Promise Rejection", {
     reason: reason instanceof Error ? reason.message : String(reason),
     stack: reason instanceof Error ? reason.stack : undefined,
     promise: promise.toString(),
   });
-
-  // Don't exit the process in production, just log the error
   if (process.env.NODE_ENV === "development") {
+    // eslint-disable-next-line no-console
     console.error("Unhandled Promise Rejection:", reason);
   }
 };
@@ -24,22 +23,21 @@ export const handleUnhandledRejection = (reason: any, promise: Promise<any>) => 
 /**
  * Handle uncaught exceptions
  */
-export const handleUncaughtException = (error: Error) => {
+export const handleUncaughtException = (error: Error): void => {
   logger.error("Uncaught Exception", {
     error: error.message,
     stack: error.stack,
   });
 
+  // eslint-disable-next-line no-console
   console.error("Uncaught Exception:", error);
-
-  // Exit the process for uncaught exceptions
   process.exit(1);
 };
 
 /**
  * Setup global error handlers
  */
-export const setupGlobalErrorHandlers = () => {
+export const setupGlobalErrorHandlers = (): void => {
   process.on("unhandledRejection", handleUnhandledRejection);
   process.on("uncaughtException", handleUncaughtException);
 

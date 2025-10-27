@@ -15,7 +15,7 @@ export const createAgentValidator: ValidationChain[] = [
     .withMessage("Agent name is required")
     .isLength({ min: 3, max: 100 })
     .withMessage("Agent name must be between 3 and 100 characters")
-    .matches(/^[a-zA-Z0-9\s\-_]+$/)
+    .matches(/^[\p{L}\p{N}\s\-_]+$/u)
     .withMessage("Agent name can only contain letters, numbers, spaces, hyphens, and underscores"),
 
   body("description")
@@ -62,7 +62,7 @@ export const updateAgentValidator: ValidationChain[] = [
     .trim()
     .isLength({ min: 3, max: 100 })
     .withMessage("Agent name must be between 3 and 100 characters")
-    .matches(/^[a-zA-Z0-9\s\-_]+$/)
+    .matches(/^[\p{L}\p{N}\s\-_]+$/u)
     .withMessage("Agent name can only contain letters, numbers, spaces, hyphens, and underscores"),
 
   body("description")

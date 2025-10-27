@@ -78,8 +78,6 @@ export class EmbeddingService {
   }
 }
 
-// Create and export singleton instance
 export const embeddingService = new EmbeddingService();
 
-// Export default for backward compatibility
 export default embeddingService;

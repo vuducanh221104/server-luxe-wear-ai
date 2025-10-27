@@ -93,6 +93,48 @@ export interface AuthenticatedRequest extends Omit<Request, "user"> {
   files?: Express.Multer.File[] | { [fieldname: string]: Express.Multer.File[] };
 }
 
+/**
+ * Interface for streaming processing result
+ * Tracks the result of processing a streaming file
+ */
+export interface StreamingProcessingResult {
+  fileId: string;
+  fileName: string;
+  status: "processing" | "completed" | "error";
+  chunks: number;
+  totalSize: number;
+  processedSize: number;
+  error?: string;
+  entries: Array<{
+    id: string;
+    content: string;
+    metadata: Record<string, unknown>;
+  }>;
+}
+
+/**
+ * Interface for chunk processing
+ * Handles processing of file chunks during streaming upload
+ */
+export interface ChunkProcessor {
+  processChunk(chunk: Buffer, metadata: ChunkMetadata): Promise<string>;
+  finalize(): Promise<string>;
+}
+
+/**
+ * Interface for chunk metadata
+ * Contains metadata about a file chunk being processed
+ */
+export interface ChunkMetadata {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  chunkIndex: number;
+  totalChunks: number;
+  offset: number;
+  size: number;
+}
+
 // Module augmentation for Express Request
 declare module "express-serve-static-core" {
   interface Request {

@@ -5,50 +5,17 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
-import { StreamingFile } from "../types/upload";
+import {
+  StreamingFile,
+  StreamingProcessingResult,
+  ChunkProcessor,
+  ChunkMetadata,
+  SUPPORTED_FILE_TYPES,
+} from "../types/upload";
 import logger from "../config/logger";
 
-// Define supported file types locally
-const SUPPORTED_FILE_TYPES = {
-  PDF: "application/pdf",
-  DOC: "application/msword",
-  DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  TXT: "text/plain",
-  MD: "text/markdown",
-} as const;
-
-// Interface for streaming processing result
-export interface StreamingProcessingResult {
-  fileId: string;
-  fileName: string;
-  status: "processing" | "completed" | "error";
-  chunks: number;
-  totalSize: number;
-  processedSize: number;
-  error?: string;
-  entries: Array<{
-    id: string;
-    content: string;
-    metadata: Record<string, unknown>;
-  }>;
-}
-
-// Interface for chunk processing
-export interface ChunkProcessor {
-  processChunk(chunk: Buffer, metadata: ChunkMetadata): Promise<string>;
-  finalize(): Promise<string>;
-}
-
-// Interface for chunk metadata
-export interface ChunkMetadata {
-  fileId: string;
-  fileName: string;
-  mimeType: string;
-  chunkIndex: number;
-  totalChunks: number;
-  offset: number;
-  size: number;
-}
+// Re-export types for backward compatibility
+export type { StreamingFile, StreamingProcessingResult, ChunkProcessor, ChunkMetadata };
 
 /**
  * PDF streaming processor using pdf-parse with chunks
@@ -215,7 +182,7 @@ export const processStreamingFile = async (
   userId: string,
   agentId: string | null,
   chunkSize: number = 5000,
-  _overlap: number = 200
+  overlap: number = 200
 ): Promise<StreamingProcessingResult> => {
   const startTime = Date.now();
 
@@ -279,8 +246,8 @@ export const processStreamingFile = async (
       dynamicChunkSize = Math.max(chunkSize, 8000);
     }
 
-    // Chunk text for vector storage
-    const textChunks = chunkTextForVector(extractedText, dynamicChunkSize);
+    // Chunk text for vector storage with overlap
+    const textChunks = chunkTextForVector(extractedText, dynamicChunkSize, overlap);
 
     // Create entries for each text chunk
     const entries = textChunks.map((chunk, index) => ({
@@ -344,30 +311,95 @@ export const processStreamingFile = async (
 };
 
 /**
- * Chunk text for vector search (optimized version)
+ * Chunk text for vector search with overlap support
+ * Improved version that maintains context between chunks
+ *
+ * @param text - Full text to chunk
+ * @param maxLength - Maximum characters per chunk (default: 5000)
+ * @param overlap - Overlap characters between chunks for context preservation (default: 200)
+ * @returns Array of text chunks with overlap
  */
-const chunkTextForVector = (text: string, maxLength: number = 5000): string[] => {
+const chunkTextForVector = (
+  text: string,
+  maxLength: number = 5000,
+  overlap: number = 200
+): string[] => {
   const sentences = text.split(/[.!?]+\s+/);
   const chunks: string[] = [];
   let currentChunk = "";
+  let previousChunkEnd = "";
 
   for (const sentence of sentences) {
     const trimmedSentence = sentence.trim();
     if (!trimmedSentence) continue;
 
+    // Check if adding sentence exceeds max length
     if ((currentChunk + trimmedSentence).length > maxLength) {
       if (currentChunk) {
         chunks.push(currentChunk.trim());
+
+        // Extract overlap from end of current chunk for next chunk
+        if (overlap > 0 && currentChunk.length > overlap) {
+          // Find last complete sentence within overlap range
+          const overlapText = currentChunk.slice(-overlap);
+          const lastSentenceStart = overlapText.search(/[.!?]+\s+/);
+
+          if (lastSentenceStart !== -1) {
+            previousChunkEnd = overlapText.slice(lastSentenceStart + 2).trim();
+          } else {
+            // If no sentence boundary, use character-based overlap
+            previousChunkEnd = overlapText.trim();
+          }
+
+          currentChunk = previousChunkEnd + (previousChunkEnd ? ". " : "") + trimmedSentence;
+        } else {
+          previousChunkEnd = "";
+          currentChunk = trimmedSentence;
+        }
+      } else {
+        // Sentence itself is too long - need to split it
+        if (trimmedSentence.length > maxLength) {
+          const words = trimmedSentence.split(/\s+/);
+          let wordChunk = previousChunkEnd;
+
+          for (const word of words) {
+            if ((wordChunk + " " + word).length > maxLength) {
+              if (wordChunk) {
+                chunks.push(wordChunk.trim());
+
+                // Use overlap for word-level chunks too
+                if (overlap > 0 && wordChunk.length > overlap) {
+                  wordChunk = wordChunk.slice(-overlap).trim() + " " + word;
+                } else {
+                  wordChunk = word;
+                }
+              } else {
+                wordChunk = word;
+              }
+            } else {
+              wordChunk += (wordChunk ? " " : "") + word;
+            }
+          }
+          currentChunk = wordChunk;
+        } else {
+          currentChunk = trimmedSentence;
+        }
       }
-      currentChunk = trimmedSentence;
     } else {
       currentChunk += (currentChunk ? ". " : "") + trimmedSentence;
     }
   }
 
-  if (currentChunk) {
+  // Add final chunk
+  if (currentChunk.trim()) {
     chunks.push(currentChunk.trim());
   }
+
+  logger.debug("Text chunking completed", {
+    totalChunks: chunks.length,
+    avgChunkSize: chunks.reduce((sum, c) => sum + c.length, 0) / chunks.length,
+    overlapUsed: overlap,
+  });
 
   return chunks;
 };
