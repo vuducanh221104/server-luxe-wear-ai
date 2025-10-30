@@ -729,6 +729,80 @@ export class AgentService {
       },
     };
   }
+
+  /**
+   * Check if user has knowledge base
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @returns Boolean indicating if user has knowledge
+   */
+  async hasKnowledge(userId: string, tenantId: string): Promise<boolean> {
+    logger.debug("Checking if user has knowledge", { userId, tenantId });
+
+    try {
+      const { count, error } = await supabaseAdmin
+        .from("knowledge")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("tenant_id", tenantId)
+        .limit(1);
+
+      if (error) {
+        logger.warn("Knowledge check failed", { error: error.message, userId, tenantId });
+        return false;
+      }
+
+      const hasKnowledge = (count || 0) > 0;
+
+      logger.debug("Knowledge check result", { userId, tenantId, hasKnowledge, count });
+
+      return hasKnowledge;
+    } catch (error) {
+      logger.warn("Knowledge check exception", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        userId,
+        tenantId,
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Log agent chat analytics
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @param query - User query
+   * @param response - AI response
+   */
+  async logChatAnalytics(
+    agentId: string,
+    userId: string,
+    tenantId: string,
+    query: string,
+    response: string
+  ): Promise<void> {
+    try {
+      await supabaseAdmin.from("analytics").insert({
+        agent_id: agentId,
+        user_id: userId,
+        tenant_id: tenantId,
+        query,
+        response,
+        vector_score: null,
+      });
+
+      logger.debug("Analytics logged successfully", { agentId });
+    } catch (error) {
+      logger.warn("Failed to log analytics", {
+        agentId,
+        userId,
+        tenantId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      // Don't throw error - analytics logging is non-critical
+    }
+  }
 }
 
 // Create and export service instance

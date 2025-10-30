@@ -12,7 +12,6 @@ import type {
   ApiResponse,
   GenerationOptions,
   RAGOptions,
-  RAGResponseData,
   HealthCheckData,
 } from "../types/gemini";
 import type { TenantContext } from "../types/tenant";
@@ -211,44 +210,6 @@ export class GeminiApiIntegration {
   }
 
   /**
-   * Generate text content with smart model selection
-   */
-  async generateContent(
-    prompt: string,
-    options: GenerationOptions = {},
-    tenantContext?: TenantContext
-  ): Promise<ApiResponse<string>> {
-    return this.executeWithRetry(
-      async () => {
-        const model = options.model || this.selectModel(options.useCase);
-
-        // Get the model instance
-        const modelInstance = this.genAI.getGenerativeModel({
-          model: model,
-          generationConfig: {
-            temperature: options.temperature || 0.7,
-            maxOutputTokens: options.maxOutputTokens || 8192,
-            topK: options.topK || 40,
-            topP: options.topP || 0.95,
-          },
-        });
-
-        // Generate content
-        const result = await modelInstance.generateContent(prompt);
-        const text = result.response.text();
-
-        if (!text || text.trim().length === 0) {
-          throw new Error("Empty response from Gemini API");
-        }
-
-        return text;
-      },
-      "generateContent",
-      tenantContext
-    );
-  }
-
-  /**
    * Count tokens in text
    */
   async countTokens(text: string, tenantContext?: TenantContext): Promise<ApiResponse<number>> {
@@ -264,19 +225,87 @@ export class GeminiApiIntegration {
   }
 
   /**
-   * Generate structured response for RAG pattern
+   * Stream generate content with smart model selection
+   * @param prompt - The prompt to generate content from
+   * @param options - Generation options
+   * @param tenantContext - Tenant context for logging
+   * @returns Async generator yielding text chunks
    */
-  async generateRAGResponse(
+  async *streamGenerateContent(
+    prompt: string,
+    options: GenerationOptions = {},
+    tenantContext?: TenantContext
+  ): AsyncGenerator<string, void, unknown> {
+    const startTime = Date.now();
+    const operationName = "streamGenerateContent";
+
+    try {
+      logger.debug(`Executing ${operationName}`, {
+        tenantId: tenantContext?.id,
+      });
+
+      const model = options.model || this.selectModel(options.useCase);
+
+      // Get the model instance
+      const modelInstance = this.genAI.getGenerativeModel({
+        model: model,
+        generationConfig: {
+          temperature: options.temperature || 0.7,
+          maxOutputTokens: options.maxOutputTokens || 8192,
+          topK: options.topK || 40,
+          topP: options.topP || 0.95,
+        },
+      });
+
+      // Generate content with streaming
+      const result = await modelInstance.generateContentStream(prompt);
+
+      // Stream chunks
+      for await (const chunk of result.stream) {
+        const text = chunk.text();
+        if (text && text.trim().length > 0) {
+          yield text;
+        }
+      }
+
+      const duration = Date.now() - startTime;
+
+      logger.info(`${operationName} completed successfully`, {
+        duration,
+        tenantId: tenantContext?.id,
+      });
+    } catch (error) {
+      const lastError = error instanceof Error ? error : new Error(String(error));
+      const duration = Date.now() - startTime;
+
+      logger.error(`${operationName} failed`, {
+        duration,
+        error: lastError.message,
+        tenantId: tenantContext?.id,
+      });
+
+      throw lastError;
+    }
+  }
+
+  /**
+   * Stream generate structured response for RAG pattern
+   * @param userMessage - User's message
+   * @param context - Context from knowledge base
+   * @param systemPrompt - System instructions
+   * @param options - RAG options
+   * @param tenantContext - Tenant context for logging
+   * @returns Async generator yielding text chunks
+   */
+  async *streamGenerateRAGResponse(
     userMessage: string,
     context: string,
     systemPrompt: string = "You are a helpful AI assistant.",
     options: RAGOptions = {},
     tenantContext?: TenantContext
-  ): Promise<ApiResponse<RAGResponseData>> {
-    return this.executeWithRetry(
-      async () => {
-        // Build structured prompt
-        const prompt = `${systemPrompt}
+  ): AsyncGenerator<string, void, unknown> {
+    // Build structured prompt
+    const prompt = `${systemPrompt}
 
 ${context ? `Context from knowledge base:\n${context}\n` : ""}
 
@@ -284,48 +313,13 @@ User question: ${userMessage}
 
 Please provide a helpful and accurate response based on the context above.`;
 
-        // Parallel: Generate response and count tokens (if metadata needed)
-        const [responseResult, tokenCounts] = await Promise.all([
-          this.generateContent(
-            prompt,
-            {
-              temperature: options.temperature,
-              useCase: "rag", // Use RAG-optimized model
-            },
-            tenantContext
-          ),
-          options.includeMetadata
-            ? Promise.all([
-                this.countTokens(prompt, tenantContext),
-                this.countTokens(userMessage, tenantContext), // Count user message instead of response for better performance
-              ])
-            : Promise.resolve([
-                { success: true, data: 0 },
-                { success: true, data: 0 },
-              ]),
-        ]);
-
-        if (!responseResult.success || !responseResult.data) {
-          throw new Error(responseResult.error || "Failed to generate response");
-        }
-
-        const responseData: RAGResponseData = {
-          response: responseResult.data,
-        };
-
-        // Add metadata if requested
-        if (options.includeMetadata) {
-          const [promptTokens, userTokens] = tokenCounts;
-          responseData.metadata = {
-            contextLength: context.length,
-            promptTokens: promptTokens.success ? promptTokens.data || 0 : 0,
-            responseTokens: userTokens.success ? userTokens.data || 0 : 0,
-          };
-        }
-
-        return responseData;
+    // Stream the response
+    yield* this.streamGenerateContent(
+      prompt,
+      {
+        temperature: options.temperature,
+        useCase: "rag",
       },
-      "generateRAGResponse",
       tenantContext
     );
   }
@@ -337,10 +331,29 @@ Please provide a helpful and accurate response based on the context above.`;
     return this.executeWithRetry(
       async () => {
         const testPrompt = "Hello";
-        const result = await this.generateContent(testPrompt, { useCase: "simple" }, tenantContext);
 
-        if (!result.success) {
-          throw new Error(result.error || "Health check failed");
+        // Test by generating a simple streaming response
+        const model = this.genAI.getGenerativeModel({
+          model: this.selectModel("simple"),
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 100,
+          },
+        });
+
+        const result = await model.generateContentStream(testPrompt);
+        let hasContent = false;
+
+        // Check if streaming works
+        for await (const chunk of result.stream) {
+          if (chunk.text()) {
+            hasContent = true;
+            break;
+          }
+        }
+
+        if (!hasContent) {
+          throw new Error("Health check failed - no content received");
         }
 
         return {

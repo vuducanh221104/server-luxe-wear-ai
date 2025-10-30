@@ -8,12 +8,7 @@ import logger from "../config/logger";
 import { embeddingService } from "./embedding.service";
 import { vectorService } from "./vector.service";
 import { defaultAIService } from "./ai.service";
-import {
-  getCachedEmbedding,
-  getCachedSearchResults,
-  getCachedAIResponse,
-  getCachedTokenCount,
-} from "../utils/cache";
+import { getCachedEmbedding, getCachedSearchResults, getCachedTokenCount } from "../utils/cache";
 
 import type { SearchResult } from "../types/knowledge";
 
@@ -23,21 +18,21 @@ import type { SearchResult } from "../types/knowledge";
  */
 export class RAGService {
   /**
-   * Chat with RAG (Retrieval Augmented Generation)
-   * Retrieves relevant context from knowledge base and generates AI response
+   * Stream chat with RAG (Retrieval Augmented Generation)
+   * Retrieves relevant context from knowledge base and streams AI response
    *
    * @param userMessage - User's question or message
    * @param userId - Optional user ID for knowledge filtering
    * @param systemPrompt - System prompt for AI (default: fashion assistant)
-   * @returns Promise<string> - AI-generated response with context
+   * @returns AsyncGenerator<string> - Async generator yielding text chunks
    */
-  async chatWithRAG(
+  async *streamChatWithRAG(
     userMessage: string,
     userId?: string,
     systemPrompt: string = "You are a helpful fashion AI assistant."
-  ): Promise<string> {
+  ): AsyncGenerator<string, void, unknown> {
     try {
-      logger.info("Starting RAG chat", {
+      logger.info("Starting streaming RAG chat", {
         userId,
         messageLength: userMessage.length,
       });
@@ -57,38 +52,29 @@ export class RAGService {
         vectorService.searchKnowledgeWithVector.bind(vectorService)
       );
 
-      // Step 3: Build context and count tokens in parallel
-      const [context, contextTokens] = await Promise.all([
-        vectorService.buildContextOptimized(searchResults as SearchResult[], 30000 - messageTokens),
-        searchResults.length > 0
-          ? getCachedTokenCount(
-              (searchResults as SearchResult[]).map((r) => r.metadata.content).join(" "),
-              embeddingService.countTokens.bind(embeddingService)
-            )
-          : Promise.resolve(0),
-      ]);
-
-      // Step 4: Generate AI response with context
-      const response = await getCachedAIResponse(
-        userMessage,
-        context,
-        systemPrompt,
-        defaultAIService.generateResponse.bind(defaultAIService)
+      // Step 3: Build context
+      const context = await vectorService.buildContextOptimized(
+        searchResults as SearchResult[],
+        30000 - messageTokens
       );
 
-      logger.info("RAG chat completed", {
-        contextUsed: !!context,
-        responseLength: response.length,
-        contextTokens,
+      logger.info("Context prepared for streaming", {
+        contextLength: context.length,
         searchResultsCount: searchResults.length,
       });
 
-      return response;
+      // Step 4: Stream AI response with context
+      yield* defaultAIService.streamGenerateResponse(userMessage, context, systemPrompt, userId);
+
+      logger.info("Streaming RAG chat completed", {
+        contextUsed: !!context,
+        searchResultsCount: searchResults.length,
+      });
     } catch (error) {
-      logger.error("RAG chat failed", {
+      logger.error("Streaming RAG chat failed", {
         error: error instanceof Error ? error.message : "Unknown error",
       });
-      throw new Error("Failed to generate AI response");
+      throw new Error("Failed to generate streaming AI response");
     }
   }
 }
@@ -97,7 +83,7 @@ export class RAGService {
 export const ragService = new RAGService();
 
 // Export method for backward compatibility
-export const chatWithRAG = ragService.chatWithRAG.bind(ragService);
+export const streamChatWithRAG = ragService.streamChatWithRAG.bind(ragService);
 
 // Export default
 export default ragService;

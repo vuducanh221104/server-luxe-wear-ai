@@ -12,7 +12,6 @@ import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { agentService } from "../services/agent.service";
 import { successResponse, errorResponse } from "../utils/response";
-import { chatWithRAG } from "../services/rag.service";
 import { supabaseAdmin } from "../config/supabase";
 import logger from "../config/logger";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
@@ -389,175 +388,134 @@ export class AgentController {
   }
 
   /**
-   * Chat with agent (private - requires authentication)
+   * Chat with agent (private - requires authentication) - STREAMING
    * POST /api/agents/:agentId/chat
    * @access User (Agent Owner) + Tenant Context
    */
-  async chatWithAgent(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
-      async () => {
-        // Check validation results
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
-        }
+  async chatWithAgent(req: Request, res: Response): Promise<void> {
+    try {
+      // Validation
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return errorResponse(res, "Validation failed", 400, errors.array()) as any;
+      }
 
-        if (!req.user) {
-          return errorResponse(res, "User not authenticated", 401);
-        }
+      if (!req.user) {
+        return errorResponse(res, "User not authenticated", 401) as any;
+      }
 
-        if (!req.tenant) {
-          return errorResponse(res, "Tenant context not found", 400);
-        }
+      if (!req.tenant) {
+        return errorResponse(res, "Tenant context not found", 400) as any;
+      }
 
-        const { agentId } = req.params;
-        const { message, context } = req.body;
+      const { agentId } = req.params;
+      const { message, context } = req.body;
 
-        // Get agent and verify ownership
-        const agent = await agentService.getAgentById(agentId, req.user.id, req.tenant.id);
+      // Get agent and verify ownership (delegated to service)
+      const agent = await agentService.getAgentById(agentId, req.user.id, req.tenant.id);
 
-        // Get agent configuration
-        const agentConfig = agent.config as Record<string, unknown>;
-        const systemPrompt =
-          (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
+      // Get agent configuration
+      const agentConfig = agent.config as Record<string, unknown>;
+      const systemPrompt =
+        (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
 
-        const startTime = Date.now();
+      const startTime = Date.now();
 
-        logger.info("Agent chat request", {
-          agentId,
-          userId: req.user.id,
-          tenantId: req.tenant.id,
-          messageLength: message.length,
-          hasContext: !!context,
+      logger.info("Agent streaming chat request", {
+        agentId,
+        userId: req.user.id,
+        tenantId: req.tenant.id,
+        messageLength: message.length,
+        hasContext: !!context,
+      });
+
+      // Check if user has knowledge base (delegated to service)
+      const useRag = await agentService.hasKnowledge(req.user.id, req.tenant.id);
+
+      logger.info("Knowledge base check", {
+        agentId,
+        userId: req.user.id,
+        hasKnowledge: useRag,
+      });
+
+      // Set headers for streaming
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+
+      const aiStartTime = Date.now();
+      let fullResponse = "";
+      let generator: AsyncGenerator<string, void, unknown>;
+
+      const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
+
+      if (useRag) {
+        // Use RAG pipeline with knowledge base
+        logger.info("Using streaming RAG pipeline with knowledge base");
+        const { streamChatWithRAG } = await import("../services/rag.service");
+        generator = streamChatWithRAG(fullMessage, req.user.id, systemPrompt);
+      } else {
+        // Direct AI call without RAG (faster - use Flash model)
+        logger.info("Using direct streaming AI (no knowledge base)");
+        const { geminiApi } = await import("../integrations/gemini.api");
+        const prompt = `${systemPrompt}\n\nUser: ${fullMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
+
+        generator = geminiApi.streamGenerateContent(prompt, {
+          model: "gemini-2.5-flash",
+          maxOutputTokens: 3072,
+          temperature: 0.7,
         });
+      }
 
-        // Check if user has knowledge base to decide RAG vs direct AI
-        let useRag = false;
-        try {
-          const { count, error: countError } = await supabaseAdmin
-            .from("knowledge")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", req.user.id)
-            .eq("tenant_id", req.tenant.id)
-            .limit(1);
+      // Stream the response
+      for await (const chunk of generator) {
+        fullResponse += chunk;
+        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      }
 
-          if (!countError) {
-            useRag = (count || 0) > 0;
-          }
+      const aiDuration = Date.now() - aiStartTime;
 
-          logger.info("Knowledge base check", {
-            agentId,
-            userId: req.user.id,
-            hasKnowledge: useRag,
-            knowledgeCount: count || 0,
-          });
-        } catch (error) {
-          logger.warn("Failed to check knowledge base, defaulting to direct AI", {
-            agentId,
+      // Send completion event
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+
+      // Log analytics asynchronously (delegated to service - fire-and-forget)
+      agentService
+        .logChatAnalytics(agentId, req.user.id, req.tenant.id, message, fullResponse)
+        .catch((error) => {
+          logger.warn("Analytics logging failed (non-critical)", {
             error: error instanceof Error ? error.message : "Unknown error",
           });
-          useRag = false;
-        }
-
-        // Generate AI response
-        const aiStartTime = Date.now();
-        let response: string;
-
-        if (useRag) {
-          // Use RAG pipeline with knowledge base
-          logger.info("Using RAG pipeline with knowledge base");
-          response = await chatWithRAG(
-            context ? `${context}\n\nUser: ${message}` : message,
-            req.user.id,
-            systemPrompt
-          );
-        } else {
-          // Direct AI call without RAG (faster - use Flash model)
-          logger.info("Using direct AI (no knowledge base)");
-          const { geminiApi } = await import("../integrations/gemini.api");
-          const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
-          const prompt = `${systemPrompt}\n\nUser: ${fullMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
-
-          const result = await geminiApi.generateContent(prompt, {
-            model: "gemini-2.5-flash",
-            maxOutputTokens: 3072,
-            temperature: 0.7,
-          });
-
-          if (!result.data) {
-            throw new Error("AI response is empty");
-          }
-
-          response = result.data;
-        }
-
-        const aiDuration = Date.now() - aiStartTime;
-
-        // Log analytics asynchronously (fire-and-forget)
-        const userId = req.user.id;
-        const tenantId = req.tenant.id;
-        (async (): Promise<void> => {
-          try {
-            await supabaseAdmin.from("analytics").insert({
-              agent_id: agentId,
-              user_id: userId,
-              tenant_id: tenantId,
-              query: message,
-              response: response,
-              vector_score: null,
-            });
-            logger.debug("Analytics logged", { agentId });
-          } catch (analyticsError) {
-            logger.warn("Failed to log analytics", {
-              agentId,
-              userId,
-              tenantId,
-              error: analyticsError instanceof Error ? analyticsError.message : "Unknown error",
-            });
-          }
-        })();
-
-        const totalDuration = Date.now() - startTime;
-
-        logger.info("Agent chat completed", {
-          agentId,
-          userId: req.user.id,
-          tenantId: req.tenant.id,
-          responseLength: response.length,
-          aiDuration: `${aiDuration}ms`,
-          totalDuration: `${totalDuration}ms`,
-          usedRag: useRag,
         });
 
-        return successResponse(
-          res,
-          {
-            response,
-            agent: {
-              id: agent.id,
-              name: agent.name,
-              description: agent.description,
-            },
-            timestamp: new Date().toISOString(),
-            performance: {
-              aiDuration,
-              totalDuration,
-              useRag,
-            },
-          },
-          "Chat response generated successfully"
-        );
-      },
-      "chat with agent",
-      {
-        context: {
-          userId: req.user?.id,
-          tenantId: req.tenant?.id,
-          agentId: req.params.agentId,
-          messageLength: req.body?.message?.length,
-        },
+      const totalDuration = Date.now() - startTime;
+
+      logger.info("Agent streaming chat completed", {
+        agentId,
+        userId: req.user.id,
+        tenantId: req.tenant.id,
+        responseLength: fullResponse.length,
+        aiDuration: `${aiDuration}ms`,
+        totalDuration: `${totalDuration}ms`,
+        usedRag: useRag,
+      });
+    } catch (error) {
+      logger.error("Agent streaming chat failed", {
+        agentId: req.params.agentId,
+        userId: req.user?.id,
+        tenantId: req.tenant?.id,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      if (!res.headersSent) {
+        return errorResponse(res, "Failed to generate streaming response", 500) as any;
+      } else {
+        // If streaming already started, send error event
+        res.write(`data: ${JSON.stringify({ error: "Stream failed" })}\n\n`);
+        res.end();
       }
-    );
+    }
   }
 
   /**
