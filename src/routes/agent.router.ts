@@ -87,7 +87,7 @@ router.post(
   "/",
   authMiddleware,
   tenantMiddleware,
-  strictRateLimiter,
+  // strictRateLimiter,
   createAgentValidator,
   agentController.createAgent
 );

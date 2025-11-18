@@ -37,12 +37,44 @@ const createApp = (): Application => {
   app.use(helmet());
 
   // CORS - Cross-Origin Resource Sharing
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:3000")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // Get server URL for same-origin requests
+  const SERVER_URL = process.env.SERVER_URL || process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001";
+  let SERVER_HOST = "http://localhost:3001";
+  try {
+    SERVER_HOST = new URL(SERVER_URL).origin; // Extract just origin (protocol + host + port)
+  } catch (error) {
+    // Fallback to default if URL parsing fails
+    logger.warn("Failed to parse SERVER_URL, using default", { SERVER_URL });
+  }
+
   app.use(
     cors({
-      origin: process.env.ALLOWED_ORIGINS?.split(",") || "*",
+      origin: (origin, callback) => {
+        // allow non-browser requests (e.g., curl, server-to-server)
+        if (!origin) return callback(null, true);
+        
+        // Allow same-origin requests (widget calling API from same server)
+        // This handles cases where widget HTML is served from the same server
+        if (origin === SERVER_HOST) {
+          return callback(null, true);
+        }
+        
+        // Allow configured origins
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        
+        return callback(new Error(`CORS: Origin not allowed: ${origin}`));
+      },
       credentials: true,
-      methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-      allowedHeaders: ["Content-Type", "Authorization"],
+      methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Tenant-Id", "X-API-Key"],
+      optionsSuccessStatus: 204,
     })
   );
 
@@ -114,7 +146,7 @@ const createApp = (): Application => {
 
   logger.info("Express application configured successfully", {
     environment: process.env.NODE_ENV || "development",
-    corsOrigins: process.env.ALLOWED_ORIGINS || "*",
+    corsOrigins: allowedOrigins.join(","),
   });
 
   return app;

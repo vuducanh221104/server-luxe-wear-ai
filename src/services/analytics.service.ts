@@ -213,7 +213,8 @@ export class AnalyticsService {
     tenantId: string,
     period?: string,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    agentId?: string
   ): Promise<TenantAnalyticsResult> {
     try {
       // Build date filter
@@ -221,6 +222,11 @@ export class AnalyticsService {
 
       // Get analytics data for the tenant
       let query = supabaseAdmin.from("analytics").select("*").eq("tenant_id", tenantId);
+
+      // Apply agent filter if provided
+      if (agentId) {
+        query = query.eq("agent_id", agentId);
+      }
 
       // Apply date filters
       if (dateFilter.gte) {

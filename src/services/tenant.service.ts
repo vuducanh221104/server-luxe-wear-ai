@@ -163,7 +163,23 @@ export class TenantService {
     try {
       logger.info("Deleting tenant", { tenantId: id });
 
-      // Delete tenant (cascade will handle user_tenant_memberships)
+      // Delete dependent resources first to satisfy FK constraints
+      const sequentialDeletes = [
+        { table: "analytics", key: "tenant_id" },
+        { table: "knowledge", key: "tenant_id" },
+        { table: "webhooks", key: "tenant_id" },
+        { table: "agents", key: "tenant_id" },
+        { table: "user_tenant_memberships", key: "tenant_id" },
+      ];
+
+      for (const { table, key } of sequentialDeletes) {
+        const { error } = await supabaseAdmin.from(table).delete().eq(key, id);
+        if (error) {
+          throw new Error(`Failed to delete related ${table}: ${error.message}`);
+        }
+      }
+
+      // Finally delete tenant
       const { error } = await supabaseAdmin.from("tenants").delete().eq("id", id);
 
       if (error) {

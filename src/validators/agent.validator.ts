@@ -98,6 +98,31 @@ export const updateAgentValidator: ValidationChain[] = [
     .withMessage("Instructions must not exceed 1000 characters"),
 
   body("config.tools").optional().isArray().withMessage("Tools must be an array"),
+
+  body("systemPrompt")
+    .optional()
+    .isString()
+    .isLength({ max: 2000 })
+    .withMessage("System prompt must not exceed 2000 characters"),
+
+  body("isPublic").optional().isBoolean().withMessage("isPublic must be a boolean value"),
+
+  body("allowedOrigins")
+    .optional()
+    .isArray()
+    .withMessage("allowedOrigins must be an array")
+    .custom((value: string[]) => {
+      if (value && value.length > 10) {
+        throw new Error("Maximum 10 allowed origins");
+      }
+      if (
+        value &&
+        value.some((origin: string) => typeof origin !== "string" || origin.length > 200)
+      ) {
+        throw new Error("Each origin must be a string with max 200 characters");
+      }
+      return true;
+    }),
 ];
 
 /**
@@ -119,8 +144,8 @@ export const paginationValidator: ValidationChain[] = [
 
   query("perPage")
     .optional()
-    .isInt({ min: 1, max: 50 })
-    .withMessage("Per page must be between 1 and 50")
+    .isInt({ min: 1, max: 100 })
+    .withMessage("Per page must be between 1 and 100")
     .toInt(),
 ];
 

@@ -291,12 +291,432 @@ export class PublicController {
       }
     );
   };
+
+  /**
+   * Get embeddable chat widget HTML page
+   * GET /api/public/widget/:agentId
+   * @access Public (API key optional in query param)
+   */
+  getWidgetPage = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { agentId } = req.params;
+      const apiKey = req.query.apiKey as string | undefined;
+      const API_BASE_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || "http://localhost:3001";
+      const API_PREFIX = "/api";
+
+      // Get agent info to display name
+      let agentName = "AI Assistant";
+
+      if (apiKey) {
+        try {
+          // Try to get agent info with API key
+          const { data: agent, error } = await supabaseAdmin
+            .from("agents")
+            .select("name")
+            .eq("id", agentId)
+            .eq("api_key", apiKey)
+            .single();
+
+          if (!error && agent) {
+            agentName = agent.name || "AI Assistant";
+          }
+        } catch (error) {
+          logger.warn("Failed to fetch agent info for widget", {
+            agentId,
+            error: error instanceof Error ? error.message : "Unknown",
+          });
+        }
+      }
+
+      // Generate HTML widget page
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${agentName} - Chat Widget</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #ffffff;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .chat-header {
+      padding: 16px;
+      background: #007bff;
+      color: white;
+      border-radius: 12px 12px 0 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .chat-header h3 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: #28a745;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      background: #f8f9fa;
+    }
+    .message {
+      margin-bottom: 16px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .message.user {
+      flex-direction: row-reverse;
+    }
+    .message-content {
+      max-width: 75%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      word-wrap: break-word;
+    }
+    .message.user .message-content {
+      background: #007bff;
+      color: white;
+    }
+    .message.assistant .message-content {
+      background: white;
+      color: #333;
+      border: 1px solid #e0e0e0;
+    }
+    .message-content pre {
+      background: #f5f5f5;
+      padding: 8px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 8px 0;
+    }
+    .message-content code {
+      background: #f5f5f5;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+    .message-content pre code {
+      background: transparent;
+      padding: 0;
+    }
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .message.user .avatar {
+      background: #6c757d;
+      color: white;
+    }
+    .message.assistant .avatar {
+      background: #007bff;
+      color: white;
+    }
+    .chat-input-container {
+      padding: 16px;
+      background: white;
+      border-top: 1px solid #e0e0e0;
+    }
+    .chat-input-wrapper {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    .chat-input {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      resize: none;
+      font-family: inherit;
+      font-size: 14px;
+      min-height: 44px;
+      max-height: 120px;
+    }
+    .chat-input:focus {
+      outline: none;
+      border-color: #007bff;
+    }
+    .send-button {
+      padding: 12px 24px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .send-button:hover:not(:disabled) {
+      background: #0056b3;
+    }
+    .send-button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #6c757d;
+      font-size: 14px;
+      padding: 8px 16px;
+    }
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid #007bff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .error {
+      background: #f8d7da;
+      color: #721c24;
+      padding: 12px;
+      border-radius: 8px;
+      margin: 8px 0;
+    }
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #6c757d;
+      text-align: center;
+      padding: 32px;
+    }
+    .empty-state p {
+      margin-top: 8px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="chat-header">
+    <div>
+      <span class="status-dot"></span>
+      <h3>${agentName}</h3>
+    </div>
+  </div>
+  <div class="chat-messages" id="messages">
+    <div class="empty-state">
+      <p>Start a conversation</p>
+      <p style="font-size: 12px; margin-top: 4px;">Type a message below to begin</p>
+    </div>
+  </div>
+  <div class="chat-input-container">
+    <div class="chat-input-wrapper">
+      <textarea
+        id="messageInput"
+        class="chat-input"
+        placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"
+        rows="1"
+      ></textarea>
+      <button id="sendButton" class="send-button">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const agentId = '${agentId}';
+    // Get API key from URL query parameter or from template
+    const urlParams = new URLSearchParams(window.location.search);
+    const apiKeyFromUrl = urlParams.get('apiKey');
+    const apiKey = apiKeyFromUrl || '${apiKey || ""}';
+    const apiUrl = '${API_BASE_URL}${API_PREFIX}';
+    const messagesContainer = document.getElementById('messages');
+    const messageInput = document.getElementById('messageInput');
+    const sendButton = document.getElementById('sendButton');
+    
+    let isLoading = false;
+    let messages = [];
+    
+    // Check if API key is available
+    if (!apiKey) {
+      messagesContainer.innerHTML = '<div class="empty-state"><p style="color: #dc3545;">⚠️ API Key Required</p><p style="font-size: 12px; margin-top: 4px;">Please provide API key in URL: ?apiKey=YOUR_API_KEY</p></div>';
+    }
+
+    // Auto-resize textarea
+    messageInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+
+    // Send message on Enter (Shift+Enter for new line)
+    messageInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // Send button click
+    sendButton.addEventListener('click', sendMessage);
+
+    function addMessage(role, content) {
+      messages.push({ role, content, timestamp: Date.now() });
+      renderMessages();
+    }
+
+    function renderMessages() {
+      if (messages.length === 0) {
+        messagesContainer.innerHTML = '<div class="empty-state"><p>Start a conversation</p><p style="font-size: 12px; margin-top: 4px;">Type a message below to begin</p></div>';
+        return;
+      }
+
+      messagesContainer.innerHTML = messages.map((msg, idx) => {
+        const isUser = msg.role === 'user';
+        const content = escapeHtml(msg.content).replace(/\\n/g, '<br>');
+        // Simple markdown: **bold**, *italic*, code, code block
+        const boldRegex = /\\*\\*([^*]+)\\*\\*/g;
+        const italicRegex = /\\*([^*]+)\\*/g;
+        const codeRegex = /\`([^\`]+)\`/g;
+        const codeBlockRegex = /\`\`\`([\\s\\S]*?)\`\`\`/g;
+        const formatted = content
+          .replace(boldRegex, '<strong>$1</strong>')
+          .replace(italicRegex, '<em>$1</em>')
+          .replace(codeRegex, '<code>$1</code>')
+          .replace(codeBlockRegex, '<pre><code>$1</code></pre>');
+        
+        const messageClass = isUser ? 'user' : 'assistant';
+        const avatarText = isUser ? 'You' : 'AI';
+        return '<div class="message ' + messageClass + '"><div class="avatar">' + avatarText + '</div><div class="message-content">' + formatted + '</div></div>';
+      }).join('');
+      
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function sendMessage() {
+      const message = messageInput.value.trim();
+      if (!message || isLoading) return;
+      
+      // Check API key before sending
+      if (!apiKey) {
+        addMessage('assistant', '❌ Error: API key is required. Please provide API key in URL: ?apiKey=YOUR_API_KEY');
+        return;
+      }
+
+      // Add user message
+      addMessage('user', message);
+      messageInput.value = '';
+      messageInput.style.height = 'auto';
+      
+      // Show loading
+      isLoading = true;
+      sendButton.disabled = true;
+      const loadingDiv = document.createElement('div');
+      loadingDiv.className = 'loading';
+      loadingDiv.id = 'loading';
+      loadingDiv.innerHTML = '<div class="spinner"></div><span>Assistant is thinking...</span>';
+      messagesContainer.appendChild(loadingDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+      try {
+        const headers = {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey, // Always send API key if available
+        };
+
+        const response = await fetch(apiUrl + '/public/agents/' + agentId + '/chat', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ message }),
+        });
+
+        const data = await response.json();
+
+        // Remove loading
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) loadingEl.remove();
+
+        if (data.success && data.data && data.data.response) {
+          addMessage('assistant', data.data.response);
+        } else {
+          const errorMsg = data.message || 'Failed to get response';
+          addMessage('assistant', '❌ Error: ' + errorMsg);
+        }
+      } catch (error) {
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) loadingEl.remove();
+        
+        const errorMsg = error.message || 'Network error';
+        addMessage('assistant', '❌ Error: ' + errorMsg);
+      } finally {
+        isLoading = false;
+        sendButton.disabled = false;
+        messageInput.focus();
+      }
+    }
+  </script>
+</body>
+</html>`;
+
+      res.setHeader("Content-Type", "text/html");
+      res.setHeader("X-Frame-Options", "ALLOWALL");
+      res.setHeader("Content-Security-Policy", "frame-ancestors *");
+      res.send(html);
+    } catch (error) {
+      logger.error("Failed to render widget page", {
+        agentId: req.params.agentId,
+        error: error instanceof Error ? error.message : "Unknown",
+      });
+      res.status(500).send(`
+        <html>
+          <body style="font-family: Arial; padding: 20px;">
+            <h2>Error loading widget</h2>
+            <p>Failed to load chat widget. Please check the agent ID and try again.</p>
+          </body>
+        </html>
+      `);
+    }
+  };
 }
 
 // Create and export controller instance
 export const publicController = new PublicController();
 
 // Export individual methods for backward compatibility
-export const { chatWithPublicAgent, getPublicAgentInfo, publicHealthCheck } = publicController;
+export const { chatWithPublicAgent, getPublicAgentInfo, publicHealthCheck, getWidgetPage } = publicController;
 
 export default publicController;

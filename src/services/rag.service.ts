@@ -29,16 +29,19 @@ export class RAGService {
    * @param userMessage - User's question or message
    * @param userId - Optional user ID for knowledge filtering
    * @param systemPrompt - System prompt for AI (default: fashion assistant)
+   * @param tenantId - Optional tenant ID for knowledge filtering
    * @returns Promise<string> - AI-generated response with context
    */
   async chatWithRAG(
     userMessage: string,
     userId?: string,
-    systemPrompt: string = "You are a helpful fashion AI assistant."
+    systemPrompt: string = "You are a helpful fashion AI assistant.",
+    tenantId?: string
   ): Promise<string> {
     try {
       logger.info("Starting RAG chat", {
         userId,
+        tenantId,
         messageLength: userMessage.length,
       });
 
@@ -52,7 +55,7 @@ export class RAGService {
       const searchResults = await getCachedSearchResults(
         queryVector,
         userId,
-        undefined, // tenantId not used in RAG chat
+        tenantId, // Pass tenantId for multi-tenancy support
         5, // topK
         vectorService.searchKnowledgeWithVector.bind(vectorService)
       );

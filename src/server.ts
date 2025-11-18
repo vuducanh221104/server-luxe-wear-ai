@@ -5,10 +5,7 @@
  */
 
 import http from "http";
-import dotenv from "dotenv";
-
-// Load environment variables
-dotenv.config();
+import "dotenv/config"; // Load environment variables
 
 // App configuration
 import createApp from "./app";
@@ -90,7 +87,7 @@ const startServer = async (): Promise<http.Server> => {
     await initializeServices();
 
     // Start listening on port 3001
-    server.listen(PORT, () => {
+    server.listen(3001, () => {
       logger.info(`🚀 Server is running on port ${PORT}`, {
         port: PORT,
         environment: process.env.NODE_ENV || "development",

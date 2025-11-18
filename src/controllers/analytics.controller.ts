@@ -81,14 +81,15 @@ export class AnalyticsController {
         }
 
         const tenantId = req.tenant.id;
-        const { period = "30d", startDate, endDate } = req.query;
+        const { period = "30d", startDate, endDate, agentId } = req.query;
 
         // Call service to get analytics
         const result = await analyticsService.getTenantAnalytics(
           tenantId,
           period as string,
           startDate as string | undefined,
-          endDate as string | undefined
+          endDate as string | undefined,
+          agentId as string | undefined
         );
 
         return successResponse(res, result, "Tenant analytics retrieved successfully");

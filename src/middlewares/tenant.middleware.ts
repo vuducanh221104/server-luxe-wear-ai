@@ -68,9 +68,13 @@ export const tenantMiddleware = async (
       return errorResponse(res, "User is not a member of any tenant", 403);
     }
 
-    // For now, use the first tenant (in the future, you might want to support tenant switching)
-    const userTenant = userTenants[0];
-    const tenant = userTenant.tenant as unknown as {
+    // Prefer tenant from header if provided and user is a member
+    const headerTenantId = (req.header("x-tenant-id") || req.header("X-Tenant-Id") || "").trim();
+    const selectedMembership = headerTenantId
+      ? (userTenants.find((m: any) => m.tenant_id === headerTenantId) || userTenants[0])
+      : userTenants[0];
+
+    const tenant = selectedMembership.tenant as unknown as {
       id: string;
       name: string;
       plan: string;
@@ -94,7 +98,7 @@ export const tenantMiddleware = async (
       name: tenant.name,
       plan: (tenant.plan || "free") as TenantPlan,
       status: (tenant.status || "active") as TenantStatus,
-      role: (userTenant.role || "member") as TenantRole,
+      role: (selectedMembership.role || "member") as TenantRole,
     };
 
     logger.debug("Tenant context set", {
@@ -102,6 +106,7 @@ export const tenantMiddleware = async (
       tenantId: req.tenant?.id,
       tenantName: req.tenant?.name,
       role: req.tenant?.role,
+      source: headerTenantId ? "header" : "default",
     });
 
     next();

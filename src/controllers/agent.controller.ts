@@ -119,6 +119,9 @@ export class AgentController {
             name: agent.name,
             description: agent.description,
             config: agent.config,
+            apiKey: agent.api_key, // Include API key for owner
+            isPublic: agent.is_public,
+            allowedOrigins: agent.allowed_origins,
             createdAt: agent.created_at,
             updatedAt: agent.updated_at,
           },
@@ -215,12 +218,15 @@ export class AgentController {
         }
 
         const { agentId } = req.params;
-        const { name, description, config } = req.body;
+        const { name, description, config, systemPrompt, isPublic, allowedOrigins } = req.body;
 
         const agent = await agentService.updateAgent(agentId, req.user.id, req.tenant.id, {
           name,
           description,
           config,
+          systemPrompt,
+          isPublic,
+          allowedOrigins,
         });
 
         return successResponse(
@@ -230,6 +236,9 @@ export class AgentController {
             name: agent.name,
             description: agent.description,
             config: agent.config,
+            apiKey: agent.api_key,
+            isPublic: agent.is_public,
+            allowedOrigins: agent.allowed_origins,
             createdAt: agent.created_at,
             updatedAt: agent.updated_at,
           },
@@ -469,7 +478,8 @@ export class AgentController {
           response = await chatWithRAG(
             context ? `${context}\n\nUser: ${message}` : message,
             req.user.id,
-            systemPrompt
+            systemPrompt,
+            req.tenant.id
           );
         } else {
           // Direct AI call without RAG (faster - use Flash model)

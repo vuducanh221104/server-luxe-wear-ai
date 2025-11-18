@@ -1,0 +1,528 @@
+### Variables
+@baseUrl = http://localhost:3001/api
+@token = {{token}}
+@adminToken = {{adminToken}}
+@refreshToken = {{refreshToken}}
+@agentId = {{agentId}}
+@userId = {{userId}}
+@tenantId = {{tenantId}}
+@knowledgeId = {{knowledgeId}}
+@webhookId = {{webhookId}}
+@apiKey = {{apiKey}}
+
+### Health
+GET {{baseUrl}}/health
+
+### =======================
+### AUTH
+### =======================
+# Register
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "you@example.com",
+  "password": "StrongPass123",
+  "name": "You"
+}
+
+###
+# Login (returns token, refreshToken)
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "you@example.com",
+  "password": "StrongPass123"
+}
+
+###
+# Me (verify token + memberships)
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{token}}
+
+###
+# Refresh access token
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+###
+# Change password
+POST {{baseUrl}}/auth/change-password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "currentPassword": "StrongPass123",
+  "newPassword": "StrongerPass123"
+}
+
+###
+# Forgot password
+POST {{baseUrl}}/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "you@example.com"
+}
+
+###
+# Verify token
+POST {{baseUrl}}/auth/verify-token
+Content-Type: application/json
+
+{
+  "token": "{{token}}"
+}
+
+### =======================
+### USERS
+### =======================
+# Get current profile
+GET {{baseUrl}}/users/profile
+Authorization: Bearer {{token}}
+
+###
+# Update profile
+PUT {{baseUrl}}/users/profile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "You Updated",
+  "phone": "+123456789",
+  "website": "https://example.com",
+  "preferences": { "lang": "vi" }
+}
+
+###
+# Update email
+PUT {{baseUrl}}/users/email
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "email": "new@example.com"
+}
+
+###
+# Delete avatar
+DELETE {{baseUrl}}/users/avatar
+Authorization: Bearer {{token}}
+
+###
+# User stats
+GET {{baseUrl}}/users/stats
+Authorization: Bearer {{token}}
+
+###
+# Get memberships
+GET {{baseUrl}}/users/memberships
+Authorization: Bearer {{token}}
+
+### Admin: list users
+GET {{baseUrl}}/users?page=1&perPage=20
+Authorization: Bearer {{adminToken}}
+
+### Admin: get user by id
+GET {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{adminToken}}
+
+### Admin: update user (promote to admin)
+PUT {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "role": "admin",
+  "is_active": true
+}
+
+### Admin: update password for user
+PUT {{baseUrl}}/users/{{userId}}/password
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "newPassword": "NewStrongPass123"
+}
+
+### Admin: delete user
+DELETE {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{adminToken}}
+
+### =======================
+### TENANTS
+### =======================
+# Create tenant
+POST {{baseUrl}}/tenants
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "My Company",
+  "plan": "free"
+}
+
+### List my tenants
+GET {{baseUrl}}/tenants
+Authorization: Bearer {{token}}
+
+### Get tenant by id
+GET {{baseUrl}}/tenants/{{tenantId}}
+Authorization: Bearer {{token}}
+
+### Update tenant
+PUT {{baseUrl}}/tenants/{{tenantId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "My Company Updated",
+  "plan": "pro"
+}
+
+### Delete tenant
+DELETE {{baseUrl}}/tenants/{{tenantId}}
+Authorization: Bearer {{token}}
+
+### Get tenant stats
+GET {{baseUrl}}/tenants/{{tenantId}}/stats
+Authorization: Bearer {{token}}
+
+### List tenant members
+GET {{baseUrl}}/tenants/{{tenantId}}/members
+Authorization: Bearer {{token}}
+
+### Add user to tenant
+POST {{baseUrl}}/tenants/{{tenantId}}/members
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "userId": "{{userId}}",
+  "role": "admin"
+}
+
+### Update member role
+PUT {{baseUrl}}/tenants/{{tenantId}}/members/{{userId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "role": "owner"
+}
+
+### Remove user from tenant
+DELETE {{baseUrl}}/tenants/{{tenantId}}/members/{{userId}}
+Authorization: Bearer {{token}}
+
+### Admin: list all tenants
+GET {{baseUrl}}/tenants/admin/all?page=1&perPage=20
+Authorization: Bearer {{adminToken}}
+
+### =======================
+### AGENTS (User)
+### =======================
+# Create agent
+POST {{baseUrl}}/agents
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Support Bot",
+  "description": "Answers FAQs",
+  "config": {
+    "model": "gemini-1.5-pro",
+    "temperature": 0.7,
+    "maxTokens": 1024,
+    "systemPrompt": "You are helpful.",
+    "instructions": "Use short answers.",
+    "tools": ["search"]
+  }
+}
+
+### List my agents
+GET {{baseUrl}}/agents?page=1&perPage=20
+Authorization: Bearer {{token}}
+
+### Search my agents
+GET {{baseUrl}}/agents/search?q=Support&limit=10&page=1
+Authorization: Bearer {{token}}
+
+### Get agent by id
+GET {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{token}}
+
+### Update agent
+PUT {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Support Bot v2",
+  "description": "Updated desc",
+  "config": {
+    "model": "gemini-1.5-pro",
+    "temperature": 0.6,
+    "maxTokens": 900,
+    "systemPrompt": "You are concise.",
+    "instructions": "Be concise.",
+    "tools": []
+  }
+}
+
+### Delete agent
+DELETE {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{token}}
+
+### Agent stats
+GET {{baseUrl}}/agents/{{agentId}}/stats
+Authorization: Bearer {{token}}
+
+### Chat with agent
+POST {{baseUrl}}/agents/{{agentId}}/chat
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "message": "Hello!",
+  "context": "from=landing"
+}
+
+### Regenerate API key
+POST {{baseUrl}}/agents/{{agentId}}/regenerate-key
+Authorization: Bearer {{token}}
+
+### Toggle public
+PATCH {{baseUrl}}/agents/{{agentId}}/public
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "isPublic": true,
+  "allowedOrigins": ["https://example.com"]
+}
+
+### =======================
+### AGENTS (Admin)
+### =======================
+# List all agents
+GET {{baseUrl}}/agents/admin/all?page=1&perPage=50
+Authorization: Bearer {{adminToken}}
+
+### System agent stats
+GET {{baseUrl}}/agents/admin/stats
+Authorization: Bearer {{adminToken}}
+
+### Force delete agent
+DELETE {{baseUrl}}/agents/admin/{{agentId}}
+Authorization: Bearer {{adminToken}}
+
+### Get user's agents
+GET {{baseUrl}}/agents/admin/users/{{userId}}/agents?page=1&perPage=10
+Authorization: Bearer {{adminToken}}
+
+### =======================
+### KNOWLEDGE BASE
+### =======================
+# NOTE: Knowledge stores TEXT CONTENT in Pinecone (vector DB) only, NOT in Supabase DB.
+# The DB only stores: id, title, metadata, agent_id, user_id, tenant_id, file info (url, type, size, name), timestamps.
+
+### Create Knowledge Entry (Manual)
+POST {{baseUrl}}/knowledge
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Product FAQ",
+  "metadata": {
+    "description": "Frequently asked questions about our products",
+    "category": "support",
+    "tags": ["faq", "products"],
+    "version": "1.0"
+  },
+  "agentId": "{{agentId}}"
+}
+
+### List My Knowledge Entries (with pagination)
+GET {{baseUrl}}/knowledge?page=1&perPage=20&agentId={{agentId}}
+Authorization: Bearer {{token}}
+
+### Get Knowledge Entry by ID
+GET {{baseUrl}}/knowledge/{{knowledgeId}}
+Authorization: Bearer {{token}}
+
+### Update Knowledge Entry
+PUT {{baseUrl}}/knowledge/{{knowledgeId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Product FAQ Updated",
+  "metadata": {
+    "description": "Updated FAQ content",
+    "category": "support",
+    "tags": ["faq", "products", "updated"],
+    "version": "1.1"
+  }
+}
+
+### Delete Knowledge Entry
+DELETE {{baseUrl}}/knowledge/{{knowledgeId}}
+Authorization: Bearer {{token}}
+
+### Search Knowledge by Metadata (title, filename)
+GET {{baseUrl}}/knowledge/search?query=FAQ&limit=10&agentId={{agentId}}
+Authorization: Bearer {{token}}
+
+### Upload Single File
+POST {{baseUrl}}/knowledge/upload
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="document.pdf"
+Content-Type: application/pdf
+
+(file content here)
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="title"
+
+Product Manual
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="agentId"
+
+{{agentId}}
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="chunkSize"
+
+1000
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="overlap"
+
+100
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Get Upload Progress
+GET {{baseUrl}}/knowledge/upload/progress/{{sessionId}}
+Authorization: Bearer {{token}}
+
+### Admin: Get All Knowledge Entries
+GET {{baseUrl}}/knowledge/admin/all?page=1&perPage=50
+Authorization: Bearer {{adminToken}}
+
+### Admin: Get Knowledge Statistics
+GET {{baseUrl}}/knowledge/admin/stats
+Authorization: Bearer {{adminToken}}
+
+### Admin: Force Delete Knowledge Entry
+DELETE {{baseUrl}}/knowledge/admin/{{knowledgeId}}
+Authorization: Bearer {{adminToken}}
+
+### =======================
+### PUBLIC (API Key)
+### =======================
+# Public health
+GET {{baseUrl}}/public/health
+
+### Public agent info (requires X-API-Key)
+GET {{baseUrl}}/public/agents/{{agentId}}
+X-API-Key: {{apiKey}}
+
+### Public chat (requires X-API-Key)
+POST {{baseUrl}}/public/agents/{{agentId}}/chat
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "message": "Hello from website",
+  "context": "site=home"
+}
+
+### =======================
+### WEBHOOKS
+### =======================
+# Create webhook
+POST {{baseUrl}}/webhooks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "agentId": "{{agentId}}",
+  "url": "https://your.site/hooks/agent",
+  "event": "message.created",
+  "secret": "secret-123"
+}
+
+### Search webhooks
+GET {{baseUrl}}/webhooks/search?q=agent&limit=10&page=1
+Authorization: Bearer {{token}}
+
+### Get webhook by id
+GET {{baseUrl}}/webhooks/{{webhookId}}
+Authorization: Bearer {{token}}
+
+### Update webhook
+PUT {{baseUrl}}/webhooks/{{webhookId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "url": "https://your.site/hooks/agent-updated",
+  "event": "message.updated"
+}
+
+### Delete webhook
+DELETE {{baseUrl}}/webhooks/{{webhookId}}
+Authorization: Bearer {{token}}
+
+### Test webhook
+POST {{baseUrl}}/webhooks/{{webhookId}}/test
+Authorization: Bearer {{token}}
+
+### Verify webhook signature
+POST {{baseUrl}}/webhooks/verify-signature
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "payload": "{\"test\":true}",
+  "signature": "t=timestamp,v1=hex"
+}
+
+### Incoming webhook (public)
+POST {{baseUrl}}/webhooks/process/slack
+Content-Type: application/json
+
+{
+  "type": "event_callback",
+  "event": { "text": "hello" }
+}
+
+### =======================
+### ANALYTICS
+### =======================
+# User analytics
+GET {{baseUrl}}/analytics/user
+Authorization: Bearer {{token}}
+
+### Tenant analytics
+GET {{baseUrl}}/analytics/tenant
+Authorization: Bearer {{token}}
+
+### Export analytics
+GET {{baseUrl}}/analytics/export
+Authorization: Bearer {{token}}
+
+### Agent analytics
+GET {{baseUrl}}/analytics/agents/{{agentId}}
+Authorization: Bearer {{token}}
+
+### System analytics (admin)
+GET {{baseUrl}}/analytics/system
+Authorization: Bearer {{adminToken}}

@@ -5,7 +5,7 @@
  */
 
 import { Router } from "express";
-import * as publicController from "../controllers/public.controller";
+import { publicController } from "../controllers/public.controller";
 import { apiKeyMiddleware } from "../middlewares/auth.middleware";
 import { rateLimiterMiddleware } from "../middlewares/rateLimiter.middleware";
 import {
@@ -46,5 +46,12 @@ router.get(
   publicAgentDetailsValidator,
   publicController.getPublicAgentInfo
 );
+
+/**
+ * GET /api/public/widget/:agentId
+ * Get embeddable chat widget HTML page
+ * @access Public (API key optional in query param)
+ */
+router.get("/widget/:agentId", publicController.getWidgetPage);
 
 export default router;

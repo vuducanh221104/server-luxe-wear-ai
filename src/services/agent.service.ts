@@ -168,17 +168,35 @@ export class AgentService {
     // Check ownership first
     await this.getAgentById(agentId, userId, tenantId);
 
+    // Build update object with only provided fields
+    const updateFields: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (updateData.name !== undefined) {
+      updateFields.name = updateData.name;
+    }
+    if (updateData.description !== undefined) {
+      updateFields.description = updateData.description;
+    }
+    if (updateData.config !== undefined) {
+      updateFields.config = updateData.config;
+    }
+    if (updateData.systemPrompt !== undefined) {
+      updateFields.system_prompt = updateData.systemPrompt;
+    }
+    if (updateData.isPublic !== undefined) {
+      updateFields.is_public = updateData.isPublic;
+    }
+    if (updateData.allowedOrigins !== undefined) {
+      updateFields.allowed_origins = updateData.allowedOrigins;
+    }
+
+    logger.info("Updating agent fields", { agentId, updateFields });
+
     const { data, error } = await supabaseAdmin
       .from("agents")
-      .update({
-        name: updateData.name,
-        description: updateData.description,
-        config: updateData.config,
-        system_prompt: updateData.systemPrompt,
-        is_public: updateData.isPublic,
-        allowed_origins: updateData.allowedOrigins,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updateFields)
       .eq("id", agentId)
       .eq("owner_id", userId)
       .eq("tenant_id", tenantId)
