@@ -64,6 +64,7 @@ export const getCachedEmbedding = async (
 
 /**
  * Cache for search results
+ * Note: agentId is now included in cache key to ensure proper filtering
  */
 export const getCachedSearchResults = async <T>(
   queryVector: number[],
@@ -74,22 +75,25 @@ export const getCachedSearchResults = async <T>(
     queryVector: number[],
     userId?: string,
     tenantId?: string,
-    topK?: number
-  ) => Promise<T[]>
+    topK?: number,
+    agentId?: string | null
+  ) => Promise<T[]>,
+  agentId?: string | null
 ): Promise<T[]> => {
   const cacheKey = generateCacheKey(
     "search",
-    `${queryVector.join(",")}:${userId || "all"}:${tenantId || "all"}:${topK}`
+    `${queryVector.join(",")}:${userId || "all"}:${tenantId || "all"}:${agentId || "all"}:${topK}`
   );
 
   if (cache.has(cacheKey)) {
-    logger.debug("Search cache hit", { cacheKey });
+    logger.debug("Search cache hit", { cacheKey, agentId });
     return cache.get(cacheKey) as T[];
   }
 
-  logger.debug("Search cache miss", { cacheKey });
-  const results = await searchFn(queryVector, userId, tenantId, topK);
-  cache.set(cacheKey, results, 1800); // 30 minutes TTL for search results
+  logger.debug("Search cache miss", { cacheKey, agentId });
+  const results = await searchFn(queryVector, userId, tenantId, topK, agentId);
+  // Reduced TTL to 5 minutes to allow new knowledge to be found faster
+  cache.set(cacheKey, results, 300); // 5 minutes TTL for search results
   return results;
 };
 

@@ -36,12 +36,14 @@ export class RAGService {
     userMessage: string,
     userId?: string,
     systemPrompt: string = "You are a helpful fashion AI assistant.",
-    tenantId?: string
+    tenantId?: string,
+    agentId?: string | null
   ): Promise<string> {
     try {
       logger.info("Starting RAG chat", {
         userId,
         tenantId,
+        agentId,
         messageLength: userMessage.length,
       });
 
@@ -51,14 +53,64 @@ export class RAGService {
         getCachedTokenCount(userMessage, embeddingService.countTokens.bind(embeddingService)),
       ]);
 
-      // Step 2: Search for relevant knowledge using vector
-      const searchResults = await getCachedSearchResults(
+      // Step 2: Search for relevant knowledge using vector (with agentId filter)
+      // Pass agentId to cache key to ensure proper cache invalidation
+      let searchResults = await getCachedSearchResults(
         queryVector,
         userId,
         tenantId, // Pass tenantId for multi-tenancy support
         5, // topK
-        vectorService.searchKnowledgeWithVector.bind(vectorService)
+        (vector: number[], uid?: string, tid?: string, k?: number, aid?: string | null) =>
+          vectorService.searchKnowledgeWithVector(vector, uid, tid, k, aid),
+        agentId // Pass agentId for cache key
       );
+
+      // Fallback: If no results found with agentId filter, try without agentId filter
+      // This helps when knowledge is linked to agent but vector search hasn't indexed it yet
+      if (searchResults.length === 0 && agentId) {
+        logger.info("No results with agentId filter, trying fallback search without agentId", {
+          agentId,
+          userId,
+          tenantId,
+        });
+        
+        const fallbackResults = await vectorService.searchKnowledgeWithVector(
+          queryVector,
+          userId,
+          tenantId,
+          5,
+          null // Search all knowledge, not just agent-specific
+        );
+        
+        // Filter to only include knowledge linked to this agent or general knowledge
+        const filteredFallback = fallbackResults.filter((r: any) => {
+          const metaAgentId = r.metadata?.agentId;
+          return metaAgentId === agentId || metaAgentId === null || metaAgentId === undefined || metaAgentId === "";
+        });
+        
+        if (filteredFallback.length > 0) {
+          logger.info("Fallback search found results", {
+            agentId,
+            fallbackCount: filteredFallback.length,
+          });
+          searchResults = filteredFallback;
+        }
+      }
+
+      logger.info("Knowledge search results", {
+        agentId,
+        userId,
+        tenantId,
+        searchResultsCount: searchResults.length,
+        results: searchResults.map((r: any) => ({
+          id: r.id,
+          score: r.score,
+          hasContent: !!r.metadata?.content,
+          contentLength: r.metadata?.content?.length || 0,
+          agentId: r.metadata?.agentId,
+          title: r.metadata?.title,
+        })),
+      });
 
       // Step 3: Build context and count tokens in parallel
       const [context, contextTokens] = await Promise.all([
@@ -71,6 +123,36 @@ export class RAGService {
           : Promise.resolve(0),
       ]);
 
+      if (!context || context.trim().length === 0) {
+        logger.warn("No context found from knowledge base", {
+          agentId,
+          userId,
+          tenantId,
+          searchResultsCount: searchResults.length,
+          userMessage: userMessage.substring(0, 100), // Log first 100 chars for debugging
+        });
+        
+        // If no context found, still generate response but inform AI that no knowledge was found
+        // This allows AI to respond appropriately
+        const noContextMessage = context || "";
+        const enhancedSystemPrompt = `${systemPrompt}\n\n[NOTE: No relevant knowledge was found in the knowledge base for this query. Please respond based on your general knowledge, but acknowledge if the question is outside your expertise.]`;
+        
+        const response = await getCachedAIResponse(
+          userMessage,
+          noContextMessage,
+          enhancedSystemPrompt,
+          defaultAIService.generateResponse.bind(defaultAIService)
+        );
+        
+        logger.info("RAG chat completed (no context)", {
+          agentId,
+          contextUsed: false,
+          responseLength: response.length,
+        });
+        
+        return response;
+      }
+
       // Step 4: Generate AI response with context
       const response = await getCachedAIResponse(
         userMessage,
@@ -80,7 +162,9 @@ export class RAGService {
       );
 
       logger.info("RAG chat completed", {
+        agentId,
         contextUsed: !!context,
+        contextLength: context?.length || 0,
         responseLength: response.length,
         contextTokens,
         searchResultsCount: searchResults.length,

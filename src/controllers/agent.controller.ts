@@ -440,25 +440,37 @@ export class AgentController {
           hasContext: !!context,
         });
 
-        // Check if user has knowledge base to decide RAG vs direct AI
+        // Check if user has knowledge base (linked to this agent or general) to decide RAG vs direct AI
         let useRag = false;
         try {
-          const { count, error: countError } = await supabaseAdmin
+          // First check for agent-specific knowledge
+          let knowledgeQuery = supabaseAdmin
             .from("knowledge")
             .select("*", { count: "exact", head: true })
             .eq("user_id", req.user.id)
-            .eq("tenant_id", req.tenant.id)
+            .eq("tenant_id", req.tenant.id);
+
+          // If agentId exists, prioritize agent-specific knowledge, but also include general knowledge
+          // We'll search both agent-specific and general knowledge in the RAG pipeline
+          const { count: agentKnowledgeCount } = await knowledgeQuery
+            .eq("agent_id", agentId)
             .limit(1);
 
-          if (!countError) {
-            useRag = (count || 0) > 0;
-          }
+          // Also check for general knowledge (no agent_id)
+          const { count: generalKnowledgeCount } = await knowledgeQuery
+            .is("agent_id", null)
+            .limit(1);
+
+          const totalKnowledge = (agentKnowledgeCount || 0) + (generalKnowledgeCount || 0);
+          useRag = totalKnowledge > 0;
 
           logger.info("Knowledge base check", {
             agentId,
             userId: req.user.id,
             hasKnowledge: useRag,
-            knowledgeCount: count || 0,
+            agentKnowledgeCount: agentKnowledgeCount || 0,
+            generalKnowledgeCount: generalKnowledgeCount || 0,
+            totalKnowledge,
           });
         } catch (error) {
           logger.warn("Failed to check knowledge base, defaulting to direct AI", {
@@ -473,13 +485,14 @@ export class AgentController {
         let response: string;
 
         if (useRag) {
-          // Use RAG pipeline with knowledge base
-          logger.info("Using RAG pipeline with knowledge base");
+          // Use RAG pipeline with knowledge base (filtered by agentId)
+          logger.info("Using RAG pipeline with knowledge base", { agentId });
           response = await chatWithRAG(
             context ? `${context}\n\nUser: ${message}` : message,
             req.user.id,
             systemPrompt,
-            req.tenant.id
+            req.tenant.id,
+            agentId // Pass agentId to filter knowledge
           );
         } else {
           // Direct AI call without RAG (faster - use Flash model)

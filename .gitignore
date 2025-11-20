@@ -45,5 +45,12 @@ build/
 tmp/
 temp/
 
+# Cache directories
+.npm-cache/
+.cache/
+.parcel-cache/
+.turbo/
+.eslintcache
+*.cache
 
 *.md

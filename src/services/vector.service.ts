@@ -32,16 +32,20 @@ const filterMetadata = (
 ): Record<string, string | number | boolean | string[]> => {
   const filtered: Record<string, string | number | boolean | string[]> = {};
   for (const [key, value] of Object.entries(metadata)) {
-    if (value !== null && value !== undefined) {
-      // Ensure value is a valid Pinecone metadata type
-      if (
-        typeof value === "string" ||
-        typeof value === "number" ||
-        typeof value === "boolean" ||
-        (Array.isArray(value) && value.every((v) => typeof v === "string"))
-      ) {
-        filtered[key] = value as string | number | boolean | string[];
-      }
+    // Skip null/undefined values (including null agentId - this means general knowledge)
+    // When agentId is not in metadata, it's considered general knowledge
+    if (value === null || value === undefined) {
+      continue;
+    }
+    
+    // Ensure value is a valid Pinecone metadata type
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      (Array.isArray(value) && value.every((v) => typeof v === "string"))
+    ) {
+      filtered[key] = value as string | number | boolean | string[];
     }
   }
   return filtered;
@@ -106,38 +110,129 @@ export class VectorService {
     queryVector: number[],
     userId?: string,
     tenantId?: string,
-    topK: number = 5
+    topK: number = 5,
+    agentId?: string | null
   ): Promise<SearchResult[]> {
     try {
       const index = getPineconeIndex();
-      const searchResults = await index.query({
-        vector: queryVector,
-        topK: Math.min(topK * 2, 20),
-        includeMetadata: true,
-        ...((userId || tenantId) && {
-          filter: {
-            ...(userId && { userId: { $eq: userId } }),
-            ...(tenantId && { tenantId: { $eq: tenantId } }),
-            createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
-          },
-        }),
-      });
+      
+      // If agentId is provided, search both agent-specific and general knowledge
+      if (agentId) {
+        const [agentResults, generalResults] = await Promise.all([
+          // Search agent-specific knowledge
+          index.query({
+            vector: queryVector,
+            topK: Math.min(topK * 2, 20),
+            includeMetadata: true,
+            filter: {
+              ...(userId && { userId: { $eq: userId } }),
+              ...(tenantId && { tenantId: { $eq: tenantId } }),
+              agentId: { $eq: agentId },
+              createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
+            },
+          }),
+          // Search all knowledge (will filter for general knowledge after)
+          index.query({
+            vector: queryVector,
+            topK: Math.min(topK * 2, 20),
+            includeMetadata: true,
+            filter: {
+              ...(userId && { userId: { $eq: userId } }),
+              ...(tenantId && { tenantId: { $eq: tenantId } }),
+              createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
+            },
+          }),
+        ]);
 
-      const relevantResults = searchResults.matches
-        .filter((match) => match.score && match.score > 0.6)
-        .slice(0, topK)
-        .map((match) => ({
-          id: match.id,
-          score: match.score || 0,
-          metadata: match.metadata as SearchResult["metadata"],
-        }));
+        // Merge and deduplicate results, prioritizing agent-specific
+        // Filter general results to only include those without agentId in metadata (general knowledge)
+        const generalMatches = generalResults.matches
+          .filter(m => {
+            // General knowledge doesn't have agentId in metadata (was null, so not stored)
+            return !m.metadata?.agentId || m.metadata.agentId === "";
+          })
+          .map(m => ({ ...m, isAgentSpecific: false }));
 
-      logger.info("Knowledge search completed", {
-        resultsFound: relevantResults.length,
-        topScore: relevantResults[0]?.score || 0,
-      });
+        const allMatches = [
+          ...agentResults.matches.map(m => ({ ...m, isAgentSpecific: true })),
+          ...generalMatches,
+        ];
 
-      return relevantResults;
+        // Sort by score and deduplicate by id
+        const uniqueMatches = new Map<string, typeof allMatches[0]>();
+        for (const match of allMatches) {
+          const existing = uniqueMatches.get(match.id || "");
+          if (!existing || (match.score || 0) > (existing.score || 0)) {
+            uniqueMatches.set(match.id || "", match);
+          }
+        }
+
+        // Use lower threshold (0.5) to find more relevant knowledge, especially for new uploads
+        const MIN_SCORE = 0.5;
+        const allResults = Array.from(uniqueMatches.values())
+          .filter((match) => match.score && match.score >= MIN_SCORE)
+          .sort((a, b) => {
+            // Prioritize agent-specific results
+            if (a.isAgentSpecific && !b.isAgentSpecific) return -1;
+            if (!a.isAgentSpecific && b.isAgentSpecific) return 1;
+            return (b.score || 0) - (a.score || 0);
+          });
+
+        const relevantResults = allResults
+          .slice(0, topK)
+          .map((match) => ({
+            id: match.id,
+            score: match.score || 0,
+            metadata: match.metadata as SearchResult["metadata"],
+          }));
+
+        logger.info("Knowledge search completed (with agent filter)", {
+          agentId,
+          resultsFound: relevantResults.length,
+          totalMatches: allResults.length,
+          agentSpecific: relevantResults.filter(r => r.metadata?.agentId === agentId).length,
+          general: relevantResults.filter(r => !r.metadata?.agentId || r.metadata.agentId === null).length,
+          topScore: relevantResults[0]?.score || 0,
+          minScore: MIN_SCORE,
+          allScores: allResults.slice(0, 5).map(r => r.score || 0),
+        });
+
+        return relevantResults;
+      } else {
+        // No agentId - search all user knowledge
+        const searchResults = await index.query({
+          vector: queryVector,
+          topK: Math.min(topK * 2, 20),
+          includeMetadata: true,
+          ...((userId || tenantId) && {
+            filter: {
+              ...(userId && { userId: { $eq: userId } }),
+              ...(tenantId && { tenantId: { $eq: tenantId } }),
+              createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
+            },
+          }),
+        });
+
+        // Use lower threshold (0.5) to find more relevant knowledge
+        const MIN_SCORE = 0.5;
+        const relevantResults = searchResults.matches
+          .filter((match) => match.score && match.score >= MIN_SCORE)
+          .slice(0, topK)
+          .map((match) => ({
+            id: match.id,
+            score: match.score || 0,
+            metadata: match.metadata as SearchResult["metadata"],
+          }));
+
+        logger.info("Knowledge search completed", {
+          resultsFound: relevantResults.length,
+          totalMatches: searchResults.matches.length,
+          topScore: relevantResults[0]?.score || 0,
+          minScore: MIN_SCORE,
+        });
+
+        return relevantResults;
+      }
     } catch (error) {
       logger.error("Knowledge search failed", {
         error: error instanceof Error ? error.message : "Unknown error",

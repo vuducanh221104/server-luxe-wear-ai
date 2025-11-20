@@ -227,13 +227,30 @@ export class StreamingKnowledgeService {
       // Store vectors in background (non-blocking)
       if (allVectorEntries.length > 0) {
         // Don't await this - let it run in background
-        batchStoreKnowledge(allVectorEntries).catch((error) => {
-          logger.error("Background vector storage failed", {
-            sessionId,
-            error: error instanceof Error ? error.message : "Unknown error",
-            vectorCount: allVectorEntries.length,
+        batchStoreKnowledge(allVectorEntries)
+          .then(() => {
+            // Clear search cache when new knowledge is stored to ensure fresh results
+            try {
+              const { clearCacheByPattern } = require("../utils/cache");
+              clearCacheByPattern("search:");
+              logger.info("Search cache cleared after knowledge upload", {
+                sessionId,
+                vectorCount: allVectorEntries.length,
+              });
+            } catch (cacheError) {
+              logger.warn("Failed to clear search cache", {
+                sessionId,
+                error: cacheError instanceof Error ? cacheError.message : "Unknown error",
+              });
+            }
+          })
+          .catch((error) => {
+            logger.error("Background vector storage failed", {
+              sessionId,
+              error: error instanceof Error ? error.message : "Unknown error",
+              vectorCount: allVectorEntries.length,
+            });
           });
-        });
       }
 
       const totalChunks = successfulFiles.reduce((sum, r) => sum + r.chunks, 0);

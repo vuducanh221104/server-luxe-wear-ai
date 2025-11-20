@@ -427,6 +427,9 @@ export class KnowledgeController {
 
         const { agentId, title, chunkSize = 5000, overlap = 200 } = req.body;
 
+        // Use the sessionId from middleware (where progress is tracked)
+        const uploadSessionId = session.sessionId;
+
         // Process files using streaming service
         const result = await streamingKnowledgeService.processStreamingUpload({
           files: uploadedFiles,
@@ -442,10 +445,20 @@ export class KnowledgeController {
           return errorResponse(res, "File processing failed", 500, result.errors);
         }
 
+        // Update progress in the upload session to reflect processing completion
+        // The progress entries should already be at 100% from upload completion
+        // But we ensure they're marked as completed
+        session.progress.forEach((progress) => {
+          if (progress.status === "uploading") {
+            progress.status = "completed";
+            progress.percentage = 100;
+          }
+        });
+
         return successResponse(
           res,
           {
-            sessionId: result.sessionId,
+            sessionId: uploadSessionId, // Use middleware sessionId for progress tracking
             filesProcessed: result.filesProcessed,
             totalChunks: result.totalChunks,
             totalKnowledgeEntries: result.totalKnowledgeEntries,

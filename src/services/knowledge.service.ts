@@ -301,31 +301,7 @@ export class KnowledgeService {
         throw new Error("Knowledge entry not found");
       }
 
-      // Delete from vector database first
-      try {
-        const { deleteKnowledge: deleteFromVector } = await import("./vector.service");
-        await deleteFromVector(id);
-      } catch (vectorError) {
-        logger.warn("Failed to delete from vector database, continuing with database deletion", {
-          id,
-          error: vectorError instanceof Error ? vectorError.message : "Unknown error",
-        });
-      }
-
-      // Delete file from storage if exists
-      if (knowledge.file_url) {
-        try {
-          const { storageService } = await import("./storage.service");
-          await storageService.deleteKnowledgeFile(knowledge.file_url, userId);
-        } catch (storageError) {
-          logger.warn("Failed to delete file from storage", {
-            fileUrl: knowledge.file_url,
-            error: storageError instanceof Error ? storageError.message : "Unknown error",
-          });
-        }
-      }
-
-      // Delete from database
+      // Delete from database first (fast operation) - return immediately
       const { error } = await supabaseAdmin
         .from("knowledge")
         .delete()
@@ -337,7 +313,45 @@ export class KnowledgeService {
         throw new Error(error.message);
       }
 
-      logger.info("Knowledge entry deleted", { id });
+      logger.info("Knowledge entry deleted from database", { id });
+
+      // Cleanup operations in background (don't wait for these)
+      // Delete from vector database (non-blocking)
+      Promise.all([
+        (async () => {
+          try {
+            const { deleteKnowledge: deleteFromVector } = await import("./vector.service");
+            await deleteFromVector(id);
+            logger.info("Knowledge deleted from vector DB", { id });
+          } catch (vectorError) {
+            logger.warn("Failed to delete from vector database (non-critical)", {
+              id,
+              error: vectorError instanceof Error ? vectorError.message : "Unknown error",
+            });
+          }
+        })(),
+        // Delete file from storage if exists (non-blocking)
+        knowledge.file_url
+          ? (async () => {
+              try {
+                const { storageService } = await import("./storage.service");
+                await storageService.deleteKnowledgeFile(knowledge.file_url!, userId);
+                logger.info("Knowledge file deleted from storage", { id, fileUrl: knowledge.file_url });
+              } catch (storageError) {
+                logger.warn("Failed to delete file from storage (non-critical)", {
+                  fileUrl: knowledge.file_url,
+                  error: storageError instanceof Error ? storageError.message : "Unknown error",
+                });
+              }
+            })()
+          : Promise.resolve(),
+      ]).catch((error) => {
+        // Log but don't throw - cleanup failures are non-critical
+        logger.warn("Background cleanup failed (non-critical)", {
+          id,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      });
     } catch (error) {
       logger.error("Failed to delete knowledge entry", {
         error: error instanceof Error ? error.message : "Unknown error",
