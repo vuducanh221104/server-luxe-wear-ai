@@ -128,7 +128,8 @@ export class VectorService {
               ...(userId && { userId: { $eq: userId } }),
               ...(tenantId && { tenantId: { $eq: tenantId } }),
               agentId: { $eq: agentId },
-              createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
+              // Note: createdAt filter removed - Pinecone doesn't support $gte with ISO string dates
+              // If date filtering is needed, use timestamp number instead
             },
           }),
           // Search all knowledge (will filter for general knowledge after)
@@ -139,7 +140,7 @@ export class VectorService {
             filter: {
               ...(userId && { userId: { $eq: userId } }),
               ...(tenantId && { tenantId: { $eq: tenantId } }),
-              createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
+              // Note: createdAt filter removed - Pinecone doesn't support $gte with ISO string dates
             },
           }),
         ]);
@@ -167,8 +168,9 @@ export class VectorService {
           }
         }
 
-        // Use lower threshold (0.5) to find more relevant knowledge, especially for new uploads
-        const MIN_SCORE = 0.5;
+        // Use lower threshold (0.4) to find more relevant knowledge, especially for new uploads and OCR text
+        // Lower threshold helps catch knowledge that might have slightly different embeddings
+        const MIN_SCORE = 0.4;
         const allResults = Array.from(uniqueMatches.values())
           .filter((match) => match.score && match.score >= MIN_SCORE)
           .sort((a, b) => {
@@ -190,11 +192,19 @@ export class VectorService {
           agentId,
           resultsFound: relevantResults.length,
           totalMatches: allResults.length,
+          agentSpecificMatches: agentResults.matches.length,
+          generalMatches: generalResults.matches.length,
           agentSpecific: relevantResults.filter(r => r.metadata?.agentId === agentId).length,
           general: relevantResults.filter(r => !r.metadata?.agentId || r.metadata.agentId === null).length,
           topScore: relevantResults[0]?.score || 0,
           minScore: MIN_SCORE,
           allScores: allResults.slice(0, 5).map(r => r.score || 0),
+          sampleMetadata: relevantResults.slice(0, 2).map(r => ({
+            id: r.id,
+            agentId: r.metadata?.agentId,
+            title: r.metadata?.title,
+            score: r.score,
+          })),
         });
 
         return relevantResults;
@@ -208,13 +218,13 @@ export class VectorService {
             filter: {
               ...(userId && { userId: { $eq: userId } }),
               ...(tenantId && { tenantId: { $eq: tenantId } }),
-              createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
+              // Note: createdAt filter removed - Pinecone doesn't support $gte with ISO string dates
             },
           }),
         });
 
-        // Use lower threshold (0.5) to find more relevant knowledge
-        const MIN_SCORE = 0.5;
+        // Use lower threshold (0.4) to find more relevant knowledge, especially for OCR text
+        const MIN_SCORE = 0.4;
         const relevantResults = searchResults.matches
           .filter((match) => match.score && match.score >= MIN_SCORE)
           .slice(0, topK)
@@ -400,11 +410,21 @@ export class VectorService {
             );
 
             // Filter out null/undefined values from metadata
+            // Note: agentId will be included if it's a string, excluded if null/undefined (general knowledge)
             const cleanMetadata = filterMetadata({
               content: entry.content,
               ...entry.metadata,
               createdAt: new Date().toISOString(),
             });
+
+            // Log metadata for debugging (especially agentId)
+            if (entry.metadata?.agentId) {
+              logger.debug("Storing knowledge with agentId", {
+                id: entry.id,
+                agentId: entry.metadata.agentId,
+                hasAgentIdInMetadata: !!cleanMetadata.agentId,
+              });
+            }
 
             return {
               id: entry.id,

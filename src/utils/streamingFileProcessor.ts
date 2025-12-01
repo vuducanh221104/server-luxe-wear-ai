@@ -43,19 +43,235 @@ class PDFStreamingProcessor implements ChunkProcessor {
       const pdfParse = require("pdf-parse");
       const data = await pdfParse(fullBuffer);
 
-      logger.info("PDF streaming processing completed", {
+      const extractedText = data.text.trim();
+
+      logger.info("PDF text extraction completed", {
         fileId: this.metadata.fileId,
         fileName: this.metadata.fileName,
         pageCount: data.numpages,
-        textLength: data.text.length,
+        textLength: extractedText.length,
         chunksProcessed: this.chunks.length,
       });
 
-      return data.text.trim();
+      // Always try OCR if text is minimal or if PDF might contain images
+      // Lower threshold to catch more image-based PDFs
+      const shouldTryOCR = extractedText.length < 100 || 
+                          (extractedText.length < 200 && data.numpages > 1);
+      
+      if (shouldTryOCR) {
+        logger.info("PDF may contain images, attempting OCR for better text extraction", {
+          fileId: this.metadata.fileId,
+          fileName: this.metadata.fileName,
+          textLength: extractedText.length,
+          pageCount: data.numpages,
+        });
+
+        // Try OCR using tesseract.js if available
+        try {
+          const ocrText = await this.extractTextWithOCR(fullBuffer, data.numpages);
+          if (ocrText && ocrText.length > 20) {
+            // If OCR extracted significantly more text, use it
+            if (ocrText.length > extractedText.length * 1.5 || extractedText.length < 50) {
+              logger.info("OCR extraction successful - using OCR text", {
+                fileId: this.metadata.fileId,
+                fileName: this.metadata.fileName,
+                ocrTextLength: ocrText.length,
+                originalTextLength: extractedText.length,
+                improvement: `${((ocrText.length / Math.max(extractedText.length, 1) - 1) * 100).toFixed(1)}%`,
+              });
+              return ocrText;
+            } else {
+              // Combine both texts if OCR found additional content
+              const combinedText = extractedText + "\n\n" + ocrText;
+              logger.info("Combining original and OCR text", {
+                fileId: this.metadata.fileId,
+                fileName: this.metadata.fileName,
+                originalLength: extractedText.length,
+                ocrLength: ocrText.length,
+                combinedLength: combinedText.length,
+              });
+              return combinedText;
+            }
+          } else {
+            logger.warn("OCR did not extract sufficient text", {
+              fileId: this.metadata.fileId,
+              fileName: this.metadata.fileName,
+              ocrTextLength: ocrText?.length || 0,
+            });
+          }
+        } catch (ocrError) {
+          logger.warn("OCR extraction failed or not available", {
+            fileId: this.metadata.fileId,
+            fileName: this.metadata.fileName,
+            error: ocrError instanceof Error ? ocrError.message : "Unknown OCR error",
+          });
+          // Continue with original text if OCR fails
+        }
+
+        // If OCR failed and we have minimal text, throw error
+        if (extractedText.length < 10) {
+          throw new Error(
+            "PDF appears to be image-only and OCR extraction failed. " +
+            "Please ensure the PDF contains extractable text or use a PDF with embedded text layer."
+          );
+        }
+      }
+
+      return extractedText;
     } catch (error) {
       logger.error("PDF streaming processing failed", {
         fileId: this.metadata?.fileId,
         fileName: this.metadata?.fileName,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Extract text from PDF images using OCR
+   * This method extracts images from PDF pages and uses Tesseract.js for OCR
+   * Falls back gracefully if OCR libraries are not available
+   */
+  private async extractTextWithOCR(pdfBuffer: Buffer, pageCount: number): Promise<string> {
+    try {
+      // Dynamic import to avoid loading if not needed
+      let pdfjsLib: any;
+      let createWorker: any;
+      let Canvas: any;
+
+      try {
+        pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+        const tesseract = await import("tesseract.js");
+        createWorker = tesseract.createWorker;
+        Canvas = require("canvas");
+      } catch (importError) {
+        logger.warn("OCR dependencies not available", {
+          error: importError instanceof Error ? importError.message : "Unknown error",
+        });
+        throw new Error("OCR dependencies not available");
+      }
+
+      // Set up PDF.js worker (required for pdfjs-dist in Node.js)
+      // In Node.js, we need to set the worker path
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const pdfjsWorkerPath = require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerPath;
+      } catch (workerError) {
+        logger.warn("Could not set PDF.js worker path, continuing without worker", {
+          error: workerError instanceof Error ? workerError.message : "Unknown error",
+        });
+        // Continue without worker - may work for simple PDFs
+      }
+
+      const pdf = await pdfjsLib.getDocument({ data: pdfBuffer }).promise;
+      const ocrTexts: string[] = [];
+
+      // Increase page limit for better coverage (up to 20 pages)
+      // Process more pages for better text extraction
+      const maxPages = Math.min(pageCount, 20);
+
+      logger.info("Starting OCR processing", {
+        fileId: this.metadata?.fileId,
+        fileName: this.metadata?.fileName,
+        totalPages: pageCount,
+        processingPages: maxPages,
+      });
+
+      // Create Tesseract worker with multi-language support
+      // Try English + Vietnamese, fallback to English only if Vietnamese not available
+      let worker: any;
+      try {
+        worker = await createWorker("eng+vie", 1);
+        logger.info("OCR worker created with English + Vietnamese support");
+      } catch (langError) {
+        logger.warn("Vietnamese language pack not available, using English only", {
+          error: langError instanceof Error ? langError.message : "Unknown error",
+        });
+        worker = await createWorker("eng", 1);
+      }
+
+      // Configure OCR for better accuracy
+      try {
+        await worker.setParameters({
+          tessedit_pageseg_mode: "1", // Automatic page segmentation with OSD
+          preserve_interword_spaces: "1", // Preserve spaces
+        });
+      } catch (paramError) {
+        logger.warn("Could not set OCR parameters, using defaults", {
+          error: paramError instanceof Error ? paramError.message : "Unknown error",
+        });
+      }
+
+      for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+        try {
+          const page = await pdf.getPage(pageNum);
+          // Increase scale for better OCR accuracy (3.0 instead of 2.0)
+          const viewport = page.getViewport({ scale: 3.0 });
+
+          // Render page to canvas with higher resolution
+          const canvas = Canvas.createCanvas(viewport.width, viewport.height);
+          const context = canvas.getContext("2d");
+
+          // Improve image quality for OCR
+          context.imageSmoothingEnabled = true;
+          context.imageSmoothingQuality = "high";
+
+          const renderContext = {
+            canvasContext: context,
+            viewport: viewport,
+          };
+
+          await page.render(renderContext).promise;
+
+          // Convert canvas to image buffer with high quality
+          const imageBuffer = canvas.toBuffer("image/png", { 
+            compressionLevel: 1, // Higher quality
+          });
+
+          // Perform OCR on the image with better settings
+          const { data: ocrResult } = await worker.recognize(imageBuffer, {
+            rectangle: undefined, // Process entire page
+          });
+
+          if (ocrResult.text && ocrResult.text.trim().length > 0) {
+            const pageText = ocrResult.text.trim();
+            ocrTexts.push(pageText);
+            logger.info(`OCR extracted ${pageText.length} characters from page ${pageNum}/${maxPages}`, {
+              fileId: this.metadata?.fileId,
+              fileName: this.metadata?.fileName,
+              pageNum,
+              confidence: ocrResult.confidence ? `${ocrResult.confidence.toFixed(1)}%` : "unknown",
+            });
+          } else {
+            logger.debug(`No text extracted from page ${pageNum}`);
+          }
+        } catch (pageError) {
+          logger.warn(`Failed to OCR page ${pageNum}`, {
+            fileId: this.metadata?.fileId,
+            fileName: this.metadata?.fileName,
+            pageNum,
+            error: pageError instanceof Error ? pageError.message : "Unknown error",
+          });
+          // Continue with next page
+        }
+      }
+
+      await worker.terminate();
+
+      const combinedText = ocrTexts.join("\n\n");
+      
+      logger.info("OCR processing completed", {
+        fileId: this.metadata?.fileId,
+        fileName: this.metadata?.fileName,
+        pagesProcessed: ocrTexts.length,
+        totalTextLength: combinedText.length,
+      });
+
+      return combinedText;
+    } catch (error) {
+      logger.error("OCR extraction failed", {
         error: error instanceof Error ? error.message : "Unknown error",
       });
       throw error;

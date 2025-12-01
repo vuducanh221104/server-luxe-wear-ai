@@ -102,15 +102,29 @@ export class RAGService {
         userId,
         tenantId,
         searchResultsCount: searchResults.length,
+        userMessage: userMessage.substring(0, 100), // First 100 chars for debugging
         results: searchResults.map((r: any) => ({
           id: r.id,
           score: r.score,
           hasContent: !!r.metadata?.content,
           contentLength: r.metadata?.content?.length || 0,
+          contentPreview: r.metadata?.content?.substring(0, 100) || "", // First 100 chars
           agentId: r.metadata?.agentId,
           title: r.metadata?.title,
+          fileName: r.metadata?.fileName,
         })),
       });
+
+      // Log warning if no results found but agentId is provided
+      if (searchResults.length === 0 && agentId) {
+        logger.warn("No knowledge found for agent query", {
+          agentId,
+          userId,
+          tenantId,
+          userMessage: userMessage.substring(0, 200),
+          suggestion: "Check if knowledge was uploaded with this agentId and if vector storage completed",
+        });
+      }
 
       // Step 3: Build context and count tokens in parallel
       const [context, contextTokens] = await Promise.all([

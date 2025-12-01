@@ -224,33 +224,54 @@ export class StreamingKnowledgeService {
         createdEntries = data || [];
       }
 
-      // Store vectors in background (non-blocking)
+      // Store vectors - wait for completion to ensure knowledge is immediately searchable
       if (allVectorEntries.length > 0) {
-        // Don't await this - let it run in background
-        batchStoreKnowledge(allVectorEntries)
-          .then(() => {
-            // Clear search cache when new knowledge is stored to ensure fresh results
-            try {
-              const { clearCacheByPattern } = require("../utils/cache");
-              clearCacheByPattern("search:");
-              logger.info("Search cache cleared after knowledge upload", {
-                sessionId,
-                vectorCount: allVectorEntries.length,
-              });
-            } catch (cacheError) {
-              logger.warn("Failed to clear search cache", {
-                sessionId,
-                error: cacheError instanceof Error ? cacheError.message : "Unknown error",
-              });
-            }
-          })
-          .catch((error) => {
-            logger.error("Background vector storage failed", {
+        logger.info("Starting vector storage for knowledge entries", {
+          sessionId,
+          vectorCount: allVectorEntries.length,
+          agentId: validatedAgentId,
+        });
+
+        try {
+          // Wait for vector storage to complete so knowledge is immediately available
+          await batchStoreKnowledge(allVectorEntries);
+          
+          logger.info("Vector storage completed successfully", {
+            sessionId,
+            vectorCount: allVectorEntries.length,
+            agentId: validatedAgentId,
+          });
+
+          // Clear search cache when new knowledge is stored to ensure fresh results
+          try {
+            const { clearCacheByPattern } = require("../utils/cache");
+            clearCacheByPattern("search:");
+            logger.info("Search cache cleared after knowledge upload", {
               sessionId,
-              error: error instanceof Error ? error.message : "Unknown error",
               vectorCount: allVectorEntries.length,
             });
+          } catch (cacheError) {
+            logger.warn("Failed to clear search cache", {
+              sessionId,
+              error: cacheError instanceof Error ? cacheError.message : "Unknown error",
+            });
+          }
+        } catch (error) {
+          logger.error("Vector storage failed - knowledge may not be searchable", {
+            sessionId,
+            error: error instanceof Error ? error.message : "Unknown error",
+            vectorCount: allVectorEntries.length,
+            agentId: validatedAgentId,
           });
+          // Don't throw - knowledge is still in database, just not in vector DB yet
+          // It can be re-indexed later if needed
+        }
+      } else {
+        logger.warn("No vector entries to store", {
+          sessionId,
+          successfulFiles: successfulFiles.length,
+          failedFiles: failedFiles.length,
+        });
       }
 
       const totalChunks = successfulFiles.reduce((sum, r) => sum + r.chunks, 0);
