@@ -2,6 +2,10 @@
  * @file rateLimiter.middleware.ts
  * @description Rate limiting middleware for DDoS protection
  */
+import express from "express";
+
+const app = express();
+app.set("trust proxy", 1);
 
 import rateLimit from "express-rate-limit";
 
