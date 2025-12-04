@@ -7,7 +7,7 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { successResponse, errorResponse } from "../utils/response";
-import { chatWithRAG } from "../services/rag.service";
+import { chatWithRAG, type RAGChatResponse, type Citation } from "../services/rag.service";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
 import logger from "../config/logger";
 import { supabaseAdmin } from "../config/supabase";
@@ -40,6 +40,7 @@ export class PublicController {
 
   /**
    * Generate AI response with timeout
+   * Returns response string and optional citations
    */
   private generateWithTimeout = async (
     message: string,
@@ -47,16 +48,31 @@ export class PublicController {
     ownerId: string | null,
     useRag: boolean,
     timeoutMs: number
-  ): Promise<string> => {
-    let generator: Promise<string>;
+  ): Promise<{ response: string; citations?: Citation[] }> => {
+    let generator: Promise<{ response: string; citations?: Citation[] }>;
 
     if (useRag) {
-      generator = chatWithRAG(message, ownerId || undefined, systemPrompt);
+      const ragResult = chatWithRAG(
+        message,
+        ownerId || undefined,
+        systemPrompt,
+        undefined, // tenantId
+        undefined, // agentId
+        true // includeCitations
+      );
+
+      generator = (async (): Promise<{ response: string; citations?: Citation[] }> => {
+        const result = await ragResult;
+        if (typeof result === "string") {
+          return { response: result };
+        }
+        return { response: result.response, citations: result.citations };
+      })();
     } else {
       // For direct AI without RAG, use Flash model for speed (3-5x faster)
       const { geminiApi } = await import("../integrations/gemini.api");
 
-      generator = (async (): Promise<string> => {
+      generator = (async (): Promise<{ response: string; citations?: Citation[] }> => {
         const prompt = `${systemPrompt}\n\nUser: ${message}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
 
         const result = await geminiApi.generateContent(prompt, {
@@ -69,13 +85,13 @@ export class PublicController {
           throw new Error("AI response is empty");
         }
 
-        return result.data;
+        return { response: result.data };
       })();
     }
 
     return Promise.race([
       generator,
-      new Promise<string>((_, reject) =>
+      new Promise<{ response: string; citations?: Citation[] }>((_, reject) =>
         setTimeout(() => reject(new Error("AI response timeout")), timeoutMs)
       ),
     ]);
@@ -145,15 +161,18 @@ export class PublicController {
 
         const aiStart = Date.now();
         let response: string;
+        let citations: Citation[] | undefined;
 
         try {
-          response = await this.generateWithTimeout(
+          const result = await this.generateWithTimeout(
             fullMessage,
             systemPrompt,
             agent.owner_id,
             useRag,
             timeoutMs
           );
+          response = result.response;
+          citations = result.citations;
         } catch (error) {
           const msg = error instanceof Error ? error.message : "Unknown error";
           logger.error("AI failed", {
@@ -188,12 +207,14 @@ export class PublicController {
           aiDuration: `${aiDuration}ms`,
           totalDuration: `${totalDuration}ms`,
           useRag,
+          citationsCount: citations?.length || 0,
         });
 
         return successResponse(
           res,
           {
             response,
+            citations: citations && citations.length > 0 ? citations : undefined,
             agent: {
               id: agent.id,
               name: agent.name,
@@ -588,8 +609,8 @@ export class PublicController {
     // Send button click
     sendButton.addEventListener('click', sendMessage);
 
-    function addMessage(role, content) {
-      messages.push({ role, content, timestamp: Date.now() });
+    function addMessage(role, content, citations) {
+      messages.push({ role, content, citations: citations || null, timestamp: Date.now() });
       renderMessages();
     }
 
@@ -613,9 +634,31 @@ export class PublicController {
           .replace(codeRegex, '<code>$1</code>')
           .replace(codeBlockRegex, '<pre><code>$1</code></pre>');
         
+        let citationsHtml = '';
+        if (!isUser && msg.citations && Array.isArray(msg.citations) && msg.citations.length > 0) {
+          citationsHtml = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0;"><div style="font-size: 11px; font-weight: 600; color: #6c757d; margin-bottom: 8px;">📚 Nguồn tham khảo:</div>' +
+            msg.citations.map((citation, cIdx) => {
+              const title = citation.title || citation.fileName || 'Nguồn ' + (cIdx + 1);
+              let details = [];
+              if (citation.fileName && citation.fileName !== citation.title) {
+                details.push('📄 File: ' + escapeHtml(citation.fileName));
+              }
+              if (citation.page !== undefined && citation.page !== null) {
+                details.push('📑 Trang: ' + (citation.page + 1));
+              }
+              if (citation.line !== undefined && citation.line !== null) {
+                details.push('📍 Dòng: ' + (citation.line + 1));
+              }
+              const detailsHtml = details.length > 0 ? '<div style="font-size: 10px; color: #6c757d; margin-top: 4px;">' + details.join(' • ') + '</div>' : '';
+              const contentPreview = citation.content ? '<div style="font-size: 10px; font-style: italic; color: #6c757d; margin-top: 4px; line-height: 1.4; max-height: 40px; overflow: hidden;">"' + escapeHtml(citation.content.substring(0, 150)) + '"</div>' : '';
+              return '<div style="background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px; margin-bottom: 6px; font-size: 11px;"><div style="font-weight: 600; color: #333; margin-bottom: 4px;">📄 ' + escapeHtml(title) + '</div>' + detailsHtml + contentPreview + '</div>';
+            }).join('') +
+            '</div>';
+        }
+        
         const messageClass = isUser ? 'user' : 'assistant';
         const avatarText = isUser ? 'You' : 'AI';
-        return '<div class="message ' + messageClass + '"><div class="avatar">' + avatarText + '</div><div class="message-content">' + formatted + '</div></div>';
+        return '<div class="message ' + messageClass + '"><div class="avatar">' + avatarText + '</div><div class="message-content">' + formatted + citationsHtml + '</div></div>';
       }).join('');
       
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -671,7 +714,7 @@ export class PublicController {
         if (loadingEl) loadingEl.remove();
 
         if (data.success && data.data && data.data.response) {
-          addMessage('assistant', data.data.response);
+          addMessage('assistant', data.data.response, data.data.citations);
         } else {
           const errorMsg = data.message || 'Failed to get response';
           addMessage('assistant', '❌ Error: ' + errorMsg);

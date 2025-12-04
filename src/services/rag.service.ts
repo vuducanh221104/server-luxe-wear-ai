@@ -18,10 +18,33 @@ import {
 import type { SearchResult } from "../types/knowledge";
 
 /**
+ * Citation information from knowledge base
+ */
+export interface Citation {
+  id: string;
+  title?: string;
+  fileName?: string;
+  page?: number;
+  line?: number;
+  chunkIndex?: number;
+  score: number;
+  content?: string;
+}
+
+/**
+ * RAG response with citations
+ */
+export interface RAGChatResponse {
+  response: string;
+  citations: Citation[];
+}
+
+/**
  * RAG Service
  * Combines vector search with AI generation for context-aware responses
  */
 export class RAGService {
+
   /**
    * Chat with RAG (Retrieval Augmented Generation)
    * Retrieves relevant context from knowledge base and generates AI response
@@ -30,15 +53,18 @@ export class RAGService {
    * @param userId - Optional user ID for knowledge filtering
    * @param systemPrompt - System prompt for AI (default: fashion assistant)
    * @param tenantId - Optional tenant ID for knowledge filtering
-   * @returns Promise<string> - AI-generated response with context
+   * @param agentId - Optional agent ID for knowledge filtering
+   * @param includeCitations - Whether to include citations in response (default: true)
+   * @returns Promise<RAGChatResponse | string> - AI-generated response with citations (or just string for backward compatibility)
    */
   async chatWithRAG(
     userMessage: string,
     userId?: string,
     systemPrompt: string = "You are a helpful fashion AI assistant.",
     tenantId?: string,
-    agentId?: string | null
-  ): Promise<string> {
+    agentId?: string | null,
+    includeCitations: boolean = true
+  ): Promise<RAGChatResponse | string> {
     try {
       logger.info("Starting RAG chat", {
         userId,
@@ -164,6 +190,10 @@ export class RAGService {
           responseLength: response.length,
         });
         
+        // Return with empty citations - no knowledge was used
+        if (includeCitations) {
+          return { response, citations: [] };
+        }
         return response;
       }
 
@@ -175,6 +205,21 @@ export class RAGService {
         defaultAIService.generateResponse.bind(defaultAIService)
       );
 
+      // Extract citations from search results ONLY when context was actually used
+      // Only include citations if context was meaningful (not empty and actually used in generation)
+      const citations: Citation[] = includeCitations && context && context.trim().length > 0
+        ? (searchResults as SearchResult[]).map((result) => ({
+            id: result.id,
+            title: (result.metadata?.title as string) || undefined,
+            fileName: (result.metadata?.fileName as string) || undefined,
+            page: (result.metadata?.page as number) || (result.metadata?.pageNumber as number) || undefined,
+            line: (result.metadata?.line as number) || (result.metadata?.lineNumber as number) || undefined,
+            chunkIndex: (result.metadata?.chunkIndex as number) || undefined,
+            score: result.score,
+            content: (result.metadata?.content as string)?.substring(0, 200) || undefined, // Preview of content
+          }))
+        : [];
+
       logger.info("RAG chat completed", {
         agentId,
         contextUsed: !!context,
@@ -182,8 +227,13 @@ export class RAGService {
         responseLength: response.length,
         contextTokens,
         searchResultsCount: searchResults.length,
+        citationsCount: citations.length,
       });
 
+      // Return response with citations only if context was actually used
+      if (includeCitations) {
+        return { response, citations };
+      }
       return response;
     } catch (error) {
       logger.error("RAG chat failed", {

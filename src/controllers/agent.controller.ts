@@ -483,17 +483,36 @@ export class AgentController {
         // Generate AI response
         const aiStartTime = Date.now();
         let response: string;
+        let citations: Array<{
+          id: string;
+          title?: string;
+          fileName?: string;
+          page?: number;
+          line?: number;
+          chunkIndex?: number;
+          score: number;
+          content?: string;
+        }> = [];
 
         if (useRag) {
           // Use RAG pipeline with knowledge base (filtered by agentId)
           logger.info("Using RAG pipeline with knowledge base", { agentId });
-          response = await chatWithRAG(
+          const ragResult = await chatWithRAG(
             context ? `${context}\n\nUser: ${message}` : message,
             req.user.id,
             systemPrompt,
             req.tenant.id,
-            agentId // Pass agentId to filter knowledge
+            agentId, // Pass agentId to filter knowledge
+            true // Include citations
           );
+          
+          // Handle both string (backward compatibility) and RAGChatResponse
+          if (typeof ragResult === "string") {
+            response = ragResult;
+          } else {
+            response = ragResult.response;
+            citations = ragResult.citations || [];
+          }
         } else {
           // Direct AI call without RAG (faster - use Flash model)
           logger.info("Using direct AI (no knowledge base)");
@@ -556,6 +575,7 @@ export class AgentController {
           res,
           {
             response,
+            citations: citations.length > 0 ? citations : undefined,
             agent: {
               id: agent.id,
               name: agent.name,
