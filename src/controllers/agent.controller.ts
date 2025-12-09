@@ -388,135 +388,134 @@ export class AgentController {
   }
 
   /**
-   * Chat with agent (private - requires authentication)
+   * Chat with agent (private - requires authentication) - STREAMING
    * POST /api/agents/:agentId/chat
    * @access User (Agent Owner) + Tenant Context
-   *
-   * Supports two modes:
-   * 1. Standard streaming (default): Fast streaming response with RAG
-   * 2. Function calling: AI can use tools like search_knowledge, get_knowledge_by_id
    */
   async chatWithAgent(req: Request, res: Response): Promise<void> {
-    return handleAsyncOperationStrict(
-      async () => {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          errorResponse(res, "Validation failed", 400, errors.array());
-          return;
-        }
-        if (!req.user) {
-          errorResponse(res, "User not authenticated", 401);
-          return;
-        }
-        if (!req.tenant) {
-          errorResponse(res, "Tenant context not found", 400);
-          return;
-        }
-
-        const { agentId } = req.params;
-        const { message, context, useTools, enabledTools } = req.body;
-
-        const agent = await agentService.getAgentById(agentId, req.user.id, req.tenant.id);
-        const agentConfig = agent.config as Record<string, unknown>;
-        const systemPrompt =
-          (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
-
-        // Check if function calling is requested
-        if (useTools === true) {
-          // Function calling mode - non-streaming, but with intelligent tool usage
-          logger.info("Using function calling mode", {
-            agentId,
-            userId: req.user.id,
-            enabledTools: enabledTools || "all",
-          });
-
-          // Import AI service for function calling
-          const { defaultAIService } = await import("../services/ai.service");
-
-          const toolContext = {
-            agentId,
-            userId: req.user.id,
-            tenantId: req.tenant.id,
-          };
-
-          const result = await defaultAIService.generateResponseWithTools(
-            message,
-            toolContext,
-            systemPrompt,
-            enabledTools as string[] | undefined
-          );
-
-          // Log analytics with tool usage info
-          logger.info("Tools were used in chat", {
-            agentId,
-            toolsCalled: result.toolsCalled,
-            executionTime: result.executionTime,
-          });
-
-          await agentService.logAgentChatAnalytics({
-            agentId,
-            userId: req.user.id,
-            tenantId: req.tenant.id,
-            query: message,
-            response: result.response,
-          });
-
-          // Send JSON response with tool information
-          res.json({
-            response: result.response,
-            toolsCalled: result.toolsCalled,
-            executionTime: result.executionTime,
-            toolResults: result.toolResults?.map((tr) => ({
-              toolName: tr.toolName,
-              success: tr.success,
-            })),
-          });
-          return;
-        }
-
-        // Standard streaming mode (backward compatible)
-        let useRag = false;
-        try {
-          useRag = await agentService.hasKnowledge(req.user.id, req.tenant.id);
-        } catch {
-          useRag = false;
-        }
-
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.flushHeaders && res.flushHeaders();
-
-        try {
-          const fullResponse = await agentService.streamAgentChatResponse({
-            res,
-            useRag,
-            message,
-            context,
-            systemPrompt,
-          });
-
-          await agentService.logAgentChatAnalytics({
-            agentId,
-            userId: req.user.id,
-            tenantId: req.tenant.id,
-            query: message,
-            response: fullResponse,
-          });
-        } catch (err) {
-          logger.error("AI streaming error", { error: err });
-          res.status(500).end("Internal Server Error during AI streaming");
-        }
-        return;
-      },
-      "chat with agent",
-      {
-        context: {
-          userId: req.user?.id,
-          tenantId: req.tenant?.id,
-          agentId: req.params.agentId,
-          useTools: req.body?.useTools,
-        },
+    try {
+      // Validation
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return errorResponse(res, "Validation failed", 400, errors.array()) as any;
       }
-    );
+
+      if (!req.user) {
+        return errorResponse(res, "User not authenticated", 401) as any;
+      }
+
+      if (!req.tenant) {
+        return errorResponse(res, "Tenant context not found", 400) as any;
+      }
+
+      const { agentId } = req.params;
+      const { message, context } = req.body;
+
+      // Get agent and verify ownership (delegated to service)
+      const agent = await agentService.getAgentById(agentId, req.user.id, req.tenant.id);
+
+      // Get agent configuration
+      const agentConfig = agent.config as Record<string, unknown>;
+      const systemPrompt =
+        (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
+
+      const startTime = Date.now();
+
+      logger.info("Agent streaming chat request", {
+        agentId,
+        userId: req.user.id,
+        tenantId: req.tenant.id,
+        messageLength: message.length,
+        hasContext: !!context,
+      });
+
+      // Check if user has knowledge base (delegated to service)
+      const useRag = await agentService.hasKnowledge(req.user.id, req.tenant.id);
+
+      logger.info("Knowledge base check", {
+        agentId,
+        userId: req.user.id,
+        hasKnowledge: useRag,
+      });
+
+      // Set headers for streaming
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+
+      const aiStartTime = Date.now();
+      let fullResponse = "";
+      let generator: AsyncGenerator<string, void, unknown>;
+
+      const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
+
+      if (useRag) {
+        // Use RAG pipeline with knowledge base
+        logger.info("Using streaming RAG pipeline with knowledge base");
+        const { streamChatWithRAG } = await import("../services/rag.service");
+        generator = streamChatWithRAG(fullMessage, req.user.id, systemPrompt);
+      } else {
+        // Direct AI call without RAG (faster - use Flash model)
+        logger.info("Using direct streaming AI (no knowledge base)");
+        const { geminiApi } = await import("../integrations/gemini.api");
+        const prompt = `${systemPrompt}\n\nUser: ${fullMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
+
+        generator = geminiApi.streamGenerateContent(prompt, {
+          model: "gemini-2.5-flash",
+          maxOutputTokens: 3072,
+          temperature: 0.7,
+        });
+      }
+
+      // Stream the response
+      for await (const chunk of generator) {
+        fullResponse += chunk;
+        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      }
+
+      const aiDuration = Date.now() - aiStartTime;
+
+      // Send completion event
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+
+      // Log analytics asynchronously (delegated to service - fire-and-forget)
+      agentService
+        .logChatAnalytics(agentId, req.user.id, req.tenant.id, message, fullResponse)
+        .catch((error) => {
+          logger.warn("Analytics logging failed (non-critical)", {
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        });
+
+      const totalDuration = Date.now() - startTime;
+
+      logger.info("Agent streaming chat completed", {
+        agentId,
+        userId: req.user.id,
+        tenantId: req.tenant.id,
+        responseLength: fullResponse.length,
+        aiDuration: `${aiDuration}ms`,
+        totalDuration: `${totalDuration}ms`,
+        usedRag: useRag,
+      });
+    } catch (error) {
+      logger.error("Agent streaming chat failed", {
+        agentId: req.params.agentId,
+        userId: req.user?.id,
+        tenantId: req.tenant?.id,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      if (!res.headersSent) {
+        return errorResponse(res, "Failed to generate streaming response", 500) as any;
+      } else {
+        // If streaming already started, send error event
+        res.write(`data: ${JSON.stringify({ error: "Stream failed" })}\n\n`);
+        res.end();
+      }
+    }
   }
 
   /**

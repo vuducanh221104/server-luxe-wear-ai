@@ -5,9 +5,15 @@
  * Updated for multi-tenancy support with tenant-aware logging
  */
 
-import { GoogleGenerativeAI, Content, Part, FunctionDeclaration } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import logger from "../config/logger";
-import type { GeminiConfig, GenerationOptions, RAGOptions, HealthCheckData } from "../types/gemini";
+import type {
+  GeminiConfig,
+  ApiResponse,
+  GenerationOptions,
+  RAGOptions,
+  HealthCheckData,
+} from "../types/gemini";
 import type { TenantContext } from "../types/tenant";
 
 /**
@@ -59,7 +65,7 @@ export class GeminiApiIntegration {
     operation: () => Promise<T>,
     operationName: string,
     tenantContext?: TenantContext
-  ): Promise<T> {
+  ): Promise<ApiResponse<T>> {
     const startTime = Date.now();
     let lastError: Error | null = null;
     let retries = 0;
@@ -86,7 +92,12 @@ export class GeminiApiIntegration {
           tenantId: tenantContext?.id,
         });
 
-        return result;
+        return {
+          success: true,
+          data: result,
+          retries: attempt,
+          duration,
+        };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         retries = attempt;
@@ -131,7 +142,12 @@ export class GeminiApiIntegration {
       tenantId: tenantContext?.id,
     });
 
-    throw lastError || new Error("Unknown error");
+    return {
+      success: false,
+      error: lastError?.message || "Unknown error",
+      retries,
+      duration,
+    };
   }
 
   /**
@@ -139,6 +155,9 @@ export class GeminiApiIntegration {
    */
   private isNonRetryableError(error: Error): boolean {
     const message = error.message.toLowerCase();
+
+    // Don't retry on authentication or permission errors
+    // But allow retry for quota errors with longer delay
     return (
       message.includes("api key") ||
       message.includes("invalid") ||
@@ -175,6 +194,7 @@ export class GeminiApiIntegration {
     if (!models) {
       return this.config.defaultModel; // Fallback to default
     }
+
     switch (useCase) {
       case "rag":
         return models.textGeneration; // gemini-2.5-flash
@@ -190,52 +210,9 @@ export class GeminiApiIntegration {
   }
 
   /**
-   * Generate text content with smart model selection (streaming/async iterator only)
-   */
-  async *generateContent(
-    prompt: string,
-    options: GenerationOptions = {}
-  ): AsyncGenerator<string, void, unknown> {
-    const model = options.model || this.selectModel(options.useCase);
-    const modelInstance = this.genAI.getGenerativeModel({
-      model: model,
-      generationConfig: {
-        temperature: options.temperature || 0.7,
-        maxOutputTokens: options.maxOutputTokens || 8192,
-        topK: options.topK || 40,
-        topP: options.topP || 0.95,
-      },
-    });
-    try {
-      const result = await modelInstance.generateContentStream({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-      });
-
-      if (result && result.stream) {
-        for await (const chunk of result.stream) {
-          const text = chunk.text();
-          if (text) {
-            yield text;
-          }
-        }
-      } else {
-        throw new Error("Gemini generateContentStream returned no stream");
-      }
-    } catch (err) {
-      logger.error("Gemini generateContent streaming error", err);
-      throw err;
-    }
-  }
-
-  /**
    * Count tokens in text
    */
-  async countTokens(text: string, tenantContext?: TenantContext): Promise<number> {
+  async countTokens(text: string, tenantContext?: TenantContext): Promise<ApiResponse<number>> {
     return this.executeWithRetry(
       async () => {
         const model = this.genAI.getGenerativeModel({ model: this.config.defaultModel });
@@ -248,49 +225,146 @@ export class GeminiApiIntegration {
   }
 
   /**
-   * Generate structured response for RAG pattern (streaming only)
+   * Stream generate content with smart model selection
+   * @param prompt - The prompt to generate content from
+   * @param options - Generation options
+   * @param tenantContext - Tenant context for logging
+   * @returns Async generator yielding text chunks
    */
-  async *generateRAGResponse(
+  async *streamGenerateContent(
+    prompt: string,
+    options: GenerationOptions = {},
+    tenantContext?: TenantContext
+  ): AsyncGenerator<string, void, unknown> {
+    const startTime = Date.now();
+    const operationName = "streamGenerateContent";
+
+    try {
+      logger.debug(`Executing ${operationName}`, {
+        tenantId: tenantContext?.id,
+      });
+
+      const model = options.model || this.selectModel(options.useCase);
+
+      // Get the model instance
+      const modelInstance = this.genAI.getGenerativeModel({
+        model: model,
+        generationConfig: {
+          temperature: options.temperature || 0.7,
+          maxOutputTokens: options.maxOutputTokens || 8192,
+          topK: options.topK || 40,
+          topP: options.topP || 0.95,
+        },
+      });
+
+      // Generate content with streaming
+      const result = await modelInstance.generateContentStream(prompt);
+
+      // Stream chunks
+      for await (const chunk of result.stream) {
+        const text = chunk.text();
+        if (text && text.trim().length > 0) {
+          yield text;
+        }
+      }
+
+      const duration = Date.now() - startTime;
+
+      logger.info(`${operationName} completed successfully`, {
+        duration,
+        tenantId: tenantContext?.id,
+      });
+    } catch (error) {
+      const lastError = error instanceof Error ? error : new Error(String(error));
+      const duration = Date.now() - startTime;
+
+      logger.error(`${operationName} failed`, {
+        duration,
+        error: lastError.message,
+        tenantId: tenantContext?.id,
+      });
+
+      throw lastError;
+    }
+  }
+
+  /**
+   * Stream generate structured response for RAG pattern
+   * @param userMessage - User's message
+   * @param context - Context from knowledge base
+   * @param systemPrompt - System instructions
+   * @param options - RAG options
+   * @param tenantContext - Tenant context for logging
+   * @returns Async generator yielding text chunks
+   */
+  async *streamGenerateRAGResponse(
     userMessage: string,
     context: string,
-    systemPrompt = "You are a helpful AI assistant.",
-    options: RAGOptions = {}
+    systemPrompt: string = "You are a helpful AI assistant.",
+    options: RAGOptions = {},
+    tenantContext?: TenantContext
   ): AsyncGenerator<string, void, unknown> {
-    const prompt = `${systemPrompt}\n\n${context ? `Context from knowledge base:\n${context}\n` : ""}User question: ${userMessage}\n\nPlease provide a helpful and accurate response based on the context above.`;
-    for await (const chunk of this.generateContent(prompt, {
-      temperature: options.temperature,
-      useCase: "rag",
-    })) {
-      yield chunk;
-    }
+    // Build structured prompt
+    const prompt = `${systemPrompt}
+
+${context ? `Context from knowledge base:\n${context}\n` : ""}
+
+User question: ${userMessage}
+
+Please provide a helpful and accurate response based on the context above.`;
+
+    // Stream the response
+    yield* this.streamGenerateContent(
+      prompt,
+      {
+        temperature: options.temperature,
+        useCase: "rag",
+      },
+      tenantContext
+    );
   }
 
   /**
    * Health check for Gemini API
    */
-  async healthCheck(): Promise<HealthCheckData> {
-    try {
-      const testPrompt = "Hello";
-      const gen = this.generateContent(testPrompt, { useCase: "simple" });
-      // Lấy chunk đầu tiên để xác nhận health
-      const { value } = await gen.next();
-      if (value) {
+  async healthCheck(tenantContext?: TenantContext): Promise<ApiResponse<HealthCheckData>> {
+    return this.executeWithRetry(
+      async () => {
+        const testPrompt = "Hello";
+
+        // Test by generating a simple streaming response
+        const model = this.genAI.getGenerativeModel({
+          model: this.selectModel("simple"),
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 100,
+          },
+        });
+
+        const result = await model.generateContentStream(testPrompt);
+        let hasContent = false;
+
+        // Check if streaming works
+        for await (const chunk of result.stream) {
+          if (chunk.text()) {
+            hasContent = true;
+            break;
+          }
+        }
+
+        if (!hasContent) {
+          throw new Error("Health check failed - no content received");
+        }
+
         return {
           status: "healthy",
           model: this.config.defaultModel,
           timestamp: new Date().toISOString(),
         };
-      } else {
-        throw new Error("Health check: No response");
-      }
-    } catch (err) {
-      logger.error("Gemini healthCheck error", err);
-      return {
-        status: "unhealthy",
-        model: this.config.defaultModel,
-        timestamp: new Date().toISOString(),
-      };
-    }
+      },
+      "healthCheck",
+      tenantContext
+    );
   }
 
   /**
@@ -307,155 +381,6 @@ export class GeminiApiIntegration {
    */
   getConfig(): Readonly<GeminiConfig> {
     return { ...this.config };
-  }
-
-  /**
-   * Generate content with function calling support
-   * Enables AI to call tools during conversation
-   */
-  async generateContentWithTools(
-    prompt: string,
-    tools: FunctionDeclaration[],
-    options: GenerationOptions = {},
-    tenantContext?: TenantContext
-  ): Promise<{
-    text?: string;
-    functionCalls?: Array<{ name: string; args: Record<string, unknown> }>;
-    isComplete: boolean;
-  }> {
-    return this.executeWithRetry(
-      async () => {
-        const model = options.model || this.selectModel(options.useCase);
-
-        // Get the model instance with tools
-        const modelInstance = this.genAI.getGenerativeModel({
-          model: model,
-          generationConfig: {
-            temperature: options.temperature || 0.7,
-            maxOutputTokens: options.maxOutputTokens || 8192,
-            topK: options.topK || 40,
-            topP: options.topP || 0.95,
-          },
-          tools:
-            tools.length > 0
-              ? [{ functionDeclarations: tools as FunctionDeclaration[] }]
-              : undefined,
-        });
-
-        logger.info("Gemini generateContentWithTools", {
-          model,
-          toolsCount: tools.length,
-          toolsNames: tools.map((t) => t.name),
-          promptPreview: prompt.substring(0, 200) + "...",
-          toolsJson: JSON.stringify(tools),
-        });
-
-        // Generate content
-        const result = await modelInstance.generateContent(prompt);
-        const response = result.response;
-
-        // Check if there are function calls
-        const functionCalls = response.functionCalls();
-
-        if (functionCalls && functionCalls.length > 0) {
-          // AI wants to call tools
-          return {
-            functionCalls: functionCalls.map((fc) => ({
-              name: fc.name,
-              args: fc.args as Record<string, unknown>,
-            })),
-            isComplete: false,
-          };
-        }
-
-        // Normal text response
-        const candidate = response.candidates?.[0];
-        const part = candidate?.content?.parts?.[0];
-
-        // Fix for SDK issue where text might be returned as function source code
-        let text = "";
-        if (part && "text" in part) {
-          const p = part as { text: string | (() => string) };
-          if (typeof p.text === "function") {
-            text = p.text();
-          } else {
-            text = String(p.text);
-          }
-        }
-        return {
-          text,
-          isComplete: true,
-        };
-      },
-      "generateContentWithTools",
-      tenantContext
-    );
-  }
-
-  /**
-   * Continue conversation after function call results
-   * Sends function results back to AI for final response
-   */
-  async continueWithFunctionResults(
-    chatHistory: Content[],
-    functionResults: Array<{ name: string; response: Record<string, unknown> }>,
-    tools: FunctionDeclaration[],
-    options: GenerationOptions = {},
-    tenantContext?: TenantContext
-  ): Promise<string> {
-    return this.executeWithRetry(
-      async () => {
-        const model = options.model || this.selectModel(options.useCase);
-
-        const modelInstance = this.genAI.getGenerativeModel({
-          model: model,
-          generationConfig: {
-            temperature: options.temperature || 0.7,
-            maxOutputTokens: options.maxOutputTokens || 5000,
-          },
-          tools:
-            tools.length > 0
-              ? [{ functionDeclarations: tools as unknown as FunctionDeclaration[] }]
-              : undefined,
-        });
-
-        // Start chat with history
-        const chat = modelInstance.startChat({
-          history: chatHistory,
-        });
-
-        // Send function results
-        const functionResponseParts: Part[] = functionResults.map((fr) => ({
-          functionResponse: {
-            name: fr.name,
-            response: fr.response,
-          },
-        }));
-
-        const result = await chat.sendMessage(functionResponseParts);
-        const candidate = result.response.candidates?.[0];
-        const part = candidate?.content?.parts?.[0];
-
-        // Fix for SDK issue where text might be returned as function source code
-        let text = "";
-        if (part && "text" in part) {
-          const p = part as { text: string | (() => string) };
-          if (typeof p.text === "function") {
-            text = p.text();
-          } else {
-            text = String(p.text);
-          }
-        }
-
-        if (!text || text.trim().length === 0) {
-          throw new Error("Empty response from Gemini API after function results");
-        }
-
-        return text;
-      },
-      "continueWithFunctionResults",
-      tenantContext
-    );
   }
 }
 

@@ -731,68 +731,77 @@ export class AgentService {
   }
 
   /**
-   * Kiểm tra người dùng có knowledge trong tenant không (cho RAG)
+   * Check if user has knowledge base
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @returns Boolean indicating if user has knowledge
    */
   async hasKnowledge(userId: string, tenantId: string): Promise<boolean> {
-    const { count, error } = await supabaseAdmin
-      .from("knowledge")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("tenant_id", tenantId)
-      .limit(1);
-    if (error) return false;
-    return (count || 0) > 0;
-  }
+    logger.debug("Checking if user has knowledge", { userId, tenantId });
 
-  /**
-   * Log analytics chat for agent
-   */
-  async logAgentChatAnalytics(args: { agentId: string; userId: string; tenantId: string; query: string; response: string; }): Promise<void> {
-    await supabaseAdmin.from("analytics").insert({
-      agent_id: args.agentId,
-      user_id: args.userId,
-      tenant_id: args.tenantId,
-      query: args.query,
-      response: args.response,
-      vector_score: null,
-    });
-  }
+    try {
+      const { count, error } = await supabaseAdmin
+        .from("knowledge")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("tenant_id", tenantId)
+        .limit(1);
 
-  /**
-   * Stream AI agent chat response (RAG hoặc thường)
-   */
-  async streamAgentChatResponse({ res, useRag, message, context, systemPrompt }: {
-    res: any; // Express.Response
-    useRag: boolean;
-    message: string;
-    context: string;
-    systemPrompt: string;
-  }): Promise<string> {
-    let fullResponse = "";
-    const { geminiApi } = await import("../integrations/gemini.api");
-    if (useRag) {
-      for await (const chunk of geminiApi.generateRAGResponse(
-        message,
-        context || "",
-        systemPrompt
-      )) {
-        fullResponse += chunk;
-        res.write(chunk);
+      if (error) {
+        logger.warn("Knowledge check failed", { error: error.message, userId, tenantId });
+        return false;
       }
-    } else {
-      const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
-      const prompt = `${systemPrompt}\n\nUser: ${fullMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
-      for await (const chunk of geminiApi.generateContent(prompt, {
-        model: "gemini-2.5-flash",
-        maxOutputTokens: 3072,
-        temperature: 0.7,
-      })) {
-        fullResponse += chunk;
-        res.write(chunk);
-      }
+
+      const hasKnowledge = (count || 0) > 0;
+
+      logger.debug("Knowledge check result", { userId, tenantId, hasKnowledge, count });
+
+      return hasKnowledge;
+    } catch (error) {
+      logger.warn("Knowledge check exception", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        userId,
+        tenantId,
+      });
+      return false;
     }
-    res.end();
-    return fullResponse;
+  }
+
+  /**
+   * Log agent chat analytics
+   * @param agentId - Agent ID
+   * @param userId - User ID
+   * @param tenantId - Tenant ID
+   * @param query - User query
+   * @param response - AI response
+   */
+  async logChatAnalytics(
+    agentId: string,
+    userId: string,
+    tenantId: string,
+    query: string,
+    response: string
+  ): Promise<void> {
+    try {
+      await supabaseAdmin.from("analytics").insert({
+        agent_id: agentId,
+        user_id: userId,
+        tenant_id: tenantId,
+        query,
+        response,
+        vector_score: null,
+      });
+
+      logger.debug("Analytics logged successfully", { agentId });
+    } catch (error) {
+      logger.warn("Failed to log analytics", {
+        agentId,
+        userId,
+        tenantId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      // Don't throw error - analytics logging is non-critical
+    }
   }
 }
 

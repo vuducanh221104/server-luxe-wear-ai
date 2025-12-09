@@ -67,19 +67,6 @@ export interface StreamingOptions {
  */
 export interface RAGOptions {
   temperature?: number;
-  includeMetadata?: boolean;
-}
-
-/**
- * RAG response data structure
- */
-export interface RAGResponseData {
-  response: string;
-  metadata?: {
-    contextLength: number;
-    promptTokens: number;
-    responseTokens: number;
-  };
 }
 
 /**
@@ -115,7 +102,7 @@ export enum NonRetryableErrorType {
  * Gemini API operation types for logging
  */
 export type GeminiOperation =
-  | "generateContent"
+  | "streamGenerateContent"
+  | "streamGenerateRAGResponse"
   | "countTokens"
-  | "generateRAGResponse"
   | "healthCheck";
