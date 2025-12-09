@@ -108,7 +108,7 @@ describe("Text Chunking with Overlap", () => {
     const text = "Short text.";
     const chunks = chunkTextForVector(text, 5000, 200);
 
-    expect(chunks).toEqual(["Short text"]);
+    expect(chunks).toEqual(["Short text."]);
   });
 
   it("should handle empty text", () => {

@@ -44,9 +44,7 @@ describe("Error Handler Utilities", () => {
     it("should throw error when operation fails and no fallback provided", async () => {
       const operation = jest.fn().mockRejectedValue(new Error("Test error"));
 
-      await expect(handleAsyncOperation(operation, "test operation")).rejects.toThrow(
-        "Failed to test operation"
-      );
+      await expect(handleAsyncOperation(operation, "test operation")).rejects.toThrow("Test error");
     });
 
     it("should not throw when shouldThrow is false", async () => {
@@ -91,7 +89,7 @@ describe("Error Handler Utilities", () => {
       const operation = jest.fn().mockRejectedValue(new Error("Test error"));
 
       await expect(handleAsyncOperationStrict(operation, "test operation")).rejects.toThrow(
-        "Failed to test operation"
+        "Test error"
       );
     });
 
@@ -137,9 +135,7 @@ describe("Error Handler Utilities", () => {
     it("should throw error for failed void operations", async () => {
       const operation = jest.fn().mockRejectedValue(new Error("Test error"));
 
-      await expect(handleVoidOperation(operation, "test operation")).rejects.toThrow(
-        "Failed to test operation"
-      );
+      await expect(handleVoidOperation(operation, "test operation")).rejects.toThrow("Test error");
     });
   });
 

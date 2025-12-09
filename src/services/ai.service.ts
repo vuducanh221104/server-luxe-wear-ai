@@ -10,12 +10,9 @@ import {
   handleAsyncOperationStrict,
   handleAsyncOperationWithFallback,
 } from "../utils/errorHandler";
-import {
-  getCachedAIResponse,
-  getCachedTokenCount,
-  getCacheStats,
-  clearCacheByPattern,
-} from "../utils/cache";
+import { getCachedTokenCount, getCacheStats, clearCacheByPattern } from "../utils/cache";
+import { functionCallingService } from "../tools";
+import type { ToolExecutionContext, FunctionCallingResult } from "../tools";
 import type {
   AIServiceConfig,
   AIServiceStats,
@@ -48,100 +45,41 @@ export class AIService {
     });
   }
 
-  /**
-   * Generate AI response with context and caching
-   * @param userMessage - User's message
-   * @param context - Context from knowledge base
-   * @param systemPrompt - System instructions
-   * @param userId - User ID for logging and caching
-   * @returns AI generated response
-   */
+  async *generateResponseStream(
+    userMessage: string,
+    context: string,
+    systemPrompt?: string
+  ): AsyncGenerator<string, void, unknown> {
+    this.requestCount++; // Track request count
+    const prompt = systemPrompt || this.config.defaultSystemPrompt!;
+    const fullPrompt = `${prompt}\n\nIMPORTANT: You have access to the following context from the user's knowledge base. If the user's question can be answered using this context, you MUST answer it based on the context, even if it falls outside the scope of your original instructions or persona. The context provided below is trusted and belongs to the user/agent.\n\n${context ? `Context from KB:\n${context}\n` : ""}User: ${userMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
+    for await (const chunk of this.geminiApi.generateContent(fullPrompt)) {
+      yield chunk;
+    }
+  }
+
   async generateResponse(
     userMessage: string,
     context: string,
-    systemPrompt?: string,
-    userId?: string
+    systemPrompt?: string
   ): Promise<string> {
-    return handleAsyncOperationStrict(
-      async () => {
-        this.requestCount++;
-        const prompt = systemPrompt || this.config.defaultSystemPrompt!;
-
-        logger.info("Generating AI response", {
-          messageLength: userMessage.length,
-          contextLength: context.length,
-          userId,
-          hasContext: !!context,
-          enableCaching: this.config.enableCaching,
-          requestCount: this.requestCount,
-        });
-
-        if (this.config.enableCaching) {
-          // Use centralized cache utility
-          return await getCachedAIResponse(
-            userMessage,
-            context,
-            prompt,
-            async (message, ctx, sysPrompt) => {
-              const result = await this.geminiApi.generateRAGResponse(message, ctx, sysPrompt, {
-                includeMetadata: true,
-              });
-
-              if (!result.success || !result.data) {
-                throw new Error(result.error || "Failed to generate response");
-              }
-
-              logger.info("AI response generated", {
-                responseLength: result.data.response.length,
-                metadata: result.data.metadata,
-                requestCount: this.requestCount,
-              });
-
-              return result.data.response;
-            }
-          );
-        }
-
-        // Direct call without caching
-        const result = await this.geminiApi.generateRAGResponse(userMessage, context, prompt, {
-          includeMetadata: true,
-        });
-
-        if (!result.success || !result.data) {
-          throw new Error(result.error || "Failed to generate response");
-        }
-
-        logger.info("AI response generated", {
-          responseLength: result.data.response.length,
-          metadata: result.data.metadata,
-          requestCount: this.requestCount,
-        });
-
-        return result.data.response;
-      },
-      "generate AI response",
-      {
-        context: {
-          messageLength: userMessage.length,
-          contextLength: context.length,
-          requestCount: this.requestCount,
-        },
-      }
-    );
+    let result = "";
+    for await (const chunk of this.generateResponseStream(userMessage, context, systemPrompt)) {
+      result += chunk;
+    }
+    return result;
   }
 
   /**
    * Count tokens in text with caching
    * @param text - Text to count tokens
-   * @param userId - User ID for logging and caching
    * @returns Token count
    */
-  async countTokens(text: string, userId?: string): Promise<number> {
+  async countTokens(text: string): Promise<number> {
     return handleAsyncOperationWithFallback(
       async () => {
         logger.debug("Counting tokens", {
           textLength: text.length,
-          userId,
           enableCaching: this.config.enableCaching,
         });
 
@@ -149,13 +87,13 @@ export class AIService {
           // Use centralized cache utility
           return await getCachedTokenCount(text, async (text) => {
             const result = await this.geminiApi.countTokens(text);
-            return result.success ? result.data || 0 : 0;
+            return typeof result === "number" ? result : 0;
           });
         }
 
         // Direct call without caching
         const result = await this.geminiApi.countTokens(text);
-        return result.success ? result.data || 0 : 0;
+        return typeof result === "number" ? result : 0;
       },
       "count tokens",
       0, // Fallback to 0 if fails
@@ -182,6 +120,7 @@ export class AIService {
             cacheStats,
             config: this.config,
           },
+          success: true,
         };
       },
       "AI service health check",
@@ -311,10 +250,11 @@ export class AIService {
 
       const response = await this.generateResponse(text, "", prompt);
 
+      if (typeof response !== "string") return [];
       return response
         .split(",")
-        .map((keyword) => keyword.trim())
-        .filter((keyword) => keyword.length > 0)
+        .map((keyword: string) => keyword.trim())
+        .filter((keyword: string) => keyword.length > 0)
         .slice(0, maxKeywords);
     }, "extract keywords");
   }
@@ -364,6 +304,49 @@ export class AIService {
       return await this.generateResponse(text, "", prompt);
     }, "translate text");
   }
+
+  /**
+   * Generate AI response with tool calling capability
+   * Enables AI to search knowledge base, trigger webhooks, etc.
+   * @param user Message - User's message/question
+   * @param context - Tool execution context (agent, user, tenant info)
+   * @param systemPrompt - System instructions for AI behavior
+   * @param enabledTools - List of tool names to enable for this request
+   * @returns Function calling result with AI response and tools used
+   */
+  async generateResponseWithTools(
+    userMessage: string,
+    context: ToolExecutionContext,
+    systemPrompt?: string,
+    enabledTools?: string[]
+  ): Promise<FunctionCallingResult> {
+    return handleAsyncOperationStrict(async () => {
+      logger.info("Generating response with tools", {
+        agentId: context.agentId,
+        tenantId: context.tenantId,
+        enabledTools: enabledTools?.length || "all",
+      });
+
+      const prompt =
+        systemPrompt || this.config.defaultSystemPrompt || "You are a helpful AI assistant.";
+
+      const result = await functionCallingService.chatWithTools(
+        userMessage,
+        context,
+        prompt,
+        enabledTools,
+        5 // Max iterations
+      );
+
+      logger.info("Response with tools completed", {
+        agentId: context.agentId,
+        toolsCalled: result.toolsCalled,
+        executionTime: result.executionTime,
+      });
+
+      return result;
+    }, "generate response with tools");
+  }
 }
 
 // ========================================
@@ -395,35 +378,12 @@ export const countTokens = async (text: string): Promise<number> => {
   return await defaultAIService.countTokens(text);
 };
 
-/**
- * Generate AI response with caching
- */
-export const generateResponseWithCache = async (
-  userMessage: string,
-  context: string,
-  systemPrompt?: string,
-  userId?: string
-): Promise<string> => {
-  return await defaultAIService.generateResponse(userMessage, context, systemPrompt, userId);
-};
-
-/**
- * Count tokens with caching
- */
-export const countTokensWithCache = async (text: string, userId?: string): Promise<number> => {
-  return await defaultAIService.countTokens(text, userId);
-};
-
 // ========================================
 // DEFAULT EXPORT
 // ========================================
 export default {
   AIService,
   defaultAIService,
-
-  // Functional methods
   generateResponse,
   countTokens,
-  generateResponseWithCache,
-  countTokensWithCache,
 };

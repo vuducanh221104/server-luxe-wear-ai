@@ -70,6 +70,8 @@ export async function handleAsyncOperation<T>(
 
 /**
  * Error handler for operations that should always throw on failure
+ * For controller operations that return Response, this catches errors
+ * and returns error response instead of throwing
  * @param operation - The async operation to execute
  * @param operationName - Name of the operation for logging
  * @param options - Error handling options
@@ -223,4 +225,63 @@ export async function handleBatchOperations<T>(
   }
 
   return results;
+}
+
+/**
+ * Controller-specific error handler that returns HTTP response on error
+ * This is the preferred method for Express controller operations
+ * @param operation - The async operation to execute (should return Response)
+ * @param operationName - Name of the operation for logging
+ * @param res - Express Response object for error responses
+ * @param options - Error handling options
+ * @returns Result of the operation or error response
+ */
+export async function handleControllerOperation<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  res: import("express").Response,
+  options: ErrorHandlerOptions = {}
+): Promise<T | import("express").Response> {
+  const { messagePrefix = "Failed to", shouldLog = true, context = {} } = options;
+
+  try {
+    return await operation();
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
+    const errorDetails = {
+      error: errorMessage,
+      operation: operationName,
+      ...context,
+    };
+
+    if (shouldLog) {
+      logger.error(`${messagePrefix} ${operationName}`, errorDetails);
+    }
+
+    // Return error response instead of throwing
+    return res.status(getStatusCodeFromError(error)).json({
+      success: false,
+      message: errorMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+/**
+ * Determine HTTP status code from error
+ */
+function getStatusCodeFromError(error: unknown): number {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+
+    // Check for common error patterns
+    if (msg.includes("not found")) return 404;
+    if (msg.includes("already exists") || msg.includes("duplicate")) return 409;
+    if (msg.includes("invalid") || msg.includes("validation")) return 400;
+    if (msg.includes("unauthorized") || msg.includes("authentication")) return 401;
+    if (msg.includes("forbidden") || msg.includes("permission")) return 403;
+    if (msg.includes("rate limit") || msg.includes("too many")) return 429;
+  }
+
+  return 500;
 }

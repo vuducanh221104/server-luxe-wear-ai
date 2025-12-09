@@ -110,21 +110,21 @@ export class VectorService {
   ): Promise<SearchResult[]> {
     try {
       const index = getPineconeIndex();
+
+      // Build filter - only add if we have userId or tenantId
+      const filter: Record<string, unknown> = {};
+      if (userId) filter.userId = { $eq: userId };
+      if (tenantId) filter.tenantId = { $eq: tenantId };
+
       const searchResults = await index.query({
         vector: queryVector,
         topK: Math.min(topK * 2, 20),
         includeMetadata: true,
-        ...((userId || tenantId) && {
-          filter: {
-            ...(userId && { userId: { $eq: userId } }),
-            ...(tenantId && { tenantId: { $eq: tenantId } }),
-            createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
-          },
-        }),
+        ...(Object.keys(filter).length > 0 && { filter }),
       });
 
       const relevantResults = searchResults.matches
-        .filter((match) => match.score && match.score > 0.6)
+        .filter((match) => match.score && match.score > 0.3)
         .slice(0, topK)
         .map((match) => ({
           id: match.id,
@@ -305,8 +305,9 @@ export class VectorService {
             );
 
             // Filter out null/undefined values from metadata
+            // IMPORTANT: Include content in metadata so it can be retrieved during search
             const cleanMetadata = filterMetadata({
-              content: entry.content,
+              content: entry.content, // MUST include content for retrieval
               ...entry.metadata,
               createdAt: new Date().toISOString(),
             });
@@ -350,7 +351,7 @@ export class VectorService {
       logger.info("Batch knowledge stored successfully", {
         count: entries.length,
         vectorsGenerated: vectors.length,
-        pineoneBatches: upsertPromises.length,
+        pineconeBatches: upsertPromises.length,
       });
     } catch (error) {
       logger.error("Failed to batch store knowledge", {

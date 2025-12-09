@@ -158,6 +158,22 @@ export const chatValidator: ValidationChain[] = [
     .isString()
     .isLength({ max: 2000 })
     .withMessage("Context must be a string with max 2000 characters"),
+
+  body("useTools").optional().isBoolean().withMessage("useTools must be a boolean value"),
+
+  body("enabledTools")
+    .optional()
+    .isArray()
+    .withMessage("enabledTools must be an array")
+    .custom((value: string[]) => {
+      if (value && value.length > 20) {
+        throw new Error("Maximum 20 tools can be enabled");
+      }
+      if (value && value.some((tool: string) => typeof tool !== "string" || tool.length > 50)) {
+        throw new Error("Each tool name must be a string with max 50 characters");
+      }
+      return true;
+    }),
 ];
 
 /**

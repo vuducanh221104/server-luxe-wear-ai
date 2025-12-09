@@ -26,10 +26,14 @@ export interface StreamingUploadParams {
 // Interface for streaming upload result
 export interface StreamingUploadResult {
   success: boolean;
+  partialSuccess?: boolean;
   sessionId: string;
   filesProcessed: number;
+  filesFailed: number;
   totalChunks: number;
   totalKnowledgeEntries: number;
+  vectorizationStatus: "completed" | "failed" | "partial";
+  vectorizationError?: string | null;
   files: Array<{
     fileName: string;
     status: "success" | "error";
@@ -170,7 +174,7 @@ export class StreamingKnowledgeService {
               metadata: {
                 userId,
                 title: chunkTitle,
-                agentId: validatedAgentId,
+                agentId: validatedAgentId || "",
                 tenantId,
                 fileUrl,
                 fileName: file.originalname,
@@ -224,16 +228,26 @@ export class StreamingKnowledgeService {
         createdEntries = data || [];
       }
 
-      // Store vectors in background (non-blocking)
+      // Store vectors synchronously to ensure data consistency
+      let vectorizationSuccess = true;
+      let vectorizationError: string | null = null;
+
       if (allVectorEntries.length > 0) {
-        // Don't await this - let it run in background
-        batchStoreKnowledge(allVectorEntries).catch((error) => {
-          logger.error("Background vector storage failed", {
+        try {
+          await batchStoreKnowledge(allVectorEntries);
+          logger.info("Vectors stored successfully", {
             sessionId,
-            error: error instanceof Error ? error.message : "Unknown error",
+            count: allVectorEntries.length,
+          });
+        } catch (error) {
+          vectorizationSuccess = false;
+          vectorizationError = error instanceof Error ? error.message : "Unknown error";
+          logger.error("Vector storage failed", {
+            sessionId,
+            error: vectorizationError,
             vectorCount: allVectorEntries.length,
           });
-        });
+        }
       }
 
       const totalChunks = successfulFiles.reduce((sum, r) => sum + r.chunks, 0);
@@ -248,12 +262,19 @@ export class StreamingKnowledgeService {
         totalKnowledgeEntries: allKnowledgeEntries.length,
       });
 
+      const hasPartialSuccess = successfulFiles.length > 0 && failedFiles.length > 0;
+      const overallSuccess = failedFiles.length === 0 && vectorizationSuccess;
+
       return {
-        success: true,
+        success: overallSuccess,
+        partialSuccess: hasPartialSuccess,
         sessionId,
         filesProcessed: successfulFiles.length,
+        filesFailed: failedFiles.length,
         totalChunks,
         totalKnowledgeEntries: allKnowledgeEntries.length,
+        vectorizationStatus: vectorizationSuccess ? "completed" : "failed",
+        vectorizationError,
         files: processingResults.map((r) => ({
           fileName: r.fileName,
           status: r.status === "completed" ? "success" : "error",
@@ -281,10 +302,14 @@ export class StreamingKnowledgeService {
 
       return {
         success: false,
+        partialSuccess: false,
         sessionId,
         filesProcessed: 0,
+        filesFailed: files.length,
         totalChunks: 0,
         totalKnowledgeEntries: 0,
+        vectorizationStatus: "failed",
+        vectorizationError: error instanceof Error ? error.message : "Unknown error",
         files: [],
         knowledge: { entries: [] },
         errors: [error instanceof Error ? error.message : "Unknown error"],

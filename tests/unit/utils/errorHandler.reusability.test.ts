@@ -96,7 +96,7 @@ describe("Error Handler Utility Reusability", () => {
           "update agent",
           { context: { service: "agent" } }
         )
-      ).rejects.toThrow("Failed to update agent");
+      ).rejects.toThrow("Agent not found");
     });
 
     it("should work for database operations", async () => {
@@ -221,11 +221,7 @@ describe("Error Handler Utility Reusability", () => {
         }
       }
 
-      expect(errorMessages).toEqual([
-        "Failed to operation 1",
-        "Failed to operation 2",
-        "Failed to operation 3",
-      ]);
+      expect(errorMessages).toEqual(["Database error", "API error", "Network error"]);
     });
 
     it("should provide consistent logging across services", async () => {

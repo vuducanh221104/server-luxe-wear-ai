@@ -729,6 +729,71 @@ export class AgentService {
       },
     };
   }
+
+  /**
+   * Kiểm tra người dùng có knowledge trong tenant không (cho RAG)
+   */
+  async hasKnowledge(userId: string, tenantId: string): Promise<boolean> {
+    const { count, error } = await supabaseAdmin
+      .from("knowledge")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("tenant_id", tenantId)
+      .limit(1);
+    if (error) return false;
+    return (count || 0) > 0;
+  }
+
+  /**
+   * Log analytics chat for agent
+   */
+  async logAgentChatAnalytics(args: { agentId: string; userId: string; tenantId: string; query: string; response: string; }): Promise<void> {
+    await supabaseAdmin.from("analytics").insert({
+      agent_id: args.agentId,
+      user_id: args.userId,
+      tenant_id: args.tenantId,
+      query: args.query,
+      response: args.response,
+      vector_score: null,
+    });
+  }
+
+  /**
+   * Stream AI agent chat response (RAG hoặc thường)
+   */
+  async streamAgentChatResponse({ res, useRag, message, context, systemPrompt }: {
+    res: any; // Express.Response
+    useRag: boolean;
+    message: string;
+    context: string;
+    systemPrompt: string;
+  }): Promise<string> {
+    let fullResponse = "";
+    const { geminiApi } = await import("../integrations/gemini.api");
+    if (useRag) {
+      for await (const chunk of geminiApi.generateRAGResponse(
+        message,
+        context || "",
+        systemPrompt
+      )) {
+        fullResponse += chunk;
+        res.write(chunk);
+      }
+    } else {
+      const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
+      const prompt = `${systemPrompt}\n\nUser: ${fullMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
+      for await (const chunk of geminiApi.generateContent(prompt, {
+        model: "gemini-2.5-flash",
+        maxOutputTokens: 3072,
+        temperature: 0.7,
+      })) {
+        fullResponse += chunk;
+        res.write(chunk);
+      }
+    }
+    res.end();
+    return fullResponse;
+  }
 }
 
 // Create and export service instance

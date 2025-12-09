@@ -3,7 +3,6 @@
  * @description Server entry point
  * Starts the Express server and handles graceful shutdown
  */
-
 import http from "http";
 import dotenv from "dotenv";
 

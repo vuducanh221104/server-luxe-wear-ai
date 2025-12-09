@@ -18,10 +18,20 @@ import { tenantService } from "./tenant.service";
  * Class-based service for authentication operations using custom users table
  */
 export class AuthService {
-  private readonly JWT_SECRET: string =
-    process.env.JWT_SECRET ||
-    "luxe-wear-ai-super-secret-key-2024-very-long-and-secure-jwt-secret-key-for-production-use-only";
+  private readonly JWT_SECRET: string;
   private readonly JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || "7d";
+
+  constructor() {
+    // Validate JWT_SECRET is set in production
+    if (!process.env.JWT_SECRET) {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("JWT_SECRET environment variable must be set in production");
+      }
+      logger.warn("JWT_SECRET not set - using development fallback (NOT FOR PRODUCTION)");
+    }
+    this.JWT_SECRET =
+      process.env.JWT_SECRET || "luxe-wear-ai-dev-secret-key-2024-DO-NOT-USE-IN-PRODUCTION";
+  }
 
   /**
    * Register a new user

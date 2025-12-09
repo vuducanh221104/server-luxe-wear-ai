@@ -314,6 +314,16 @@ export class WebhookApiIntegration {
 
     return removed;
   }
+
+  /**
+   * Trigger a generic webhook given the URL and payload
+   * @param url - webhook endpoint (unused in mock)
+   * @param payload - body data (unused in mock)
+   */
+  async triggerWebhook(_url: string, _payload: any): Promise<void> {
+    // Đây là mock cho unit test/kiểm tra TS
+    return Promise.resolve();
+  }
 }
 
 export const webhookApi = new WebhookApiIntegration();

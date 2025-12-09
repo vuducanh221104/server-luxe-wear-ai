@@ -38,3 +38,6 @@ export * from "./token";
 
 // Upload types
 export * from "./upload";
+
+// MCP types
+export * from "./mcp";

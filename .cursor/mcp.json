@@ -1,15 +1,12 @@
 {
   "mcpServers": {
-    "supabase": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "@supabase/mcp-server-supabase@latest",
-        "--access-token",
-        "sbp_bac0a4fe844dc8f4acd75f0587b853b9fa2e3d4a"
-      ]
+    "luxe-wear-platform": {
+      "command": "npm",
+      "args": ["run", "mcp:server"],
+      "description": "MCP Server for Luxe Wear AI Platform Management",
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
     }
   }
 }

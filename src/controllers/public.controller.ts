@@ -7,7 +7,6 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { successResponse, errorResponse } from "../utils/response";
-import { chatWithRAG } from "../services/rag.service";
 import { handleAsyncOperationStrict } from "../utils/errorHandler";
 import logger from "../config/logger";
 import { supabaseAdmin } from "../config/supabase";
@@ -39,49 +38,6 @@ export class PublicController {
   };
 
   /**
-   * Generate AI response with timeout
-   */
-  private generateWithTimeout = async (
-    message: string,
-    systemPrompt: string,
-    ownerId: string | null,
-    useRag: boolean,
-    timeoutMs: number
-  ): Promise<string> => {
-    let generator: Promise<string>;
-
-    if (useRag) {
-      generator = chatWithRAG(message, ownerId || undefined, systemPrompt);
-    } else {
-      // For direct AI without RAG, use Flash model for speed (3-5x faster)
-      const { geminiApi } = await import("../integrations/gemini.api");
-
-      generator = (async (): Promise<string> => {
-        const prompt = `${systemPrompt}\n\nUser: ${message}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`;
-
-        const result = await geminiApi.generateContent(prompt, {
-          model: "gemini-2.5-flash",
-          maxOutputTokens: 3072,
-          temperature: 0.7,
-        });
-
-        if (!result.data) {
-          throw new Error("AI response is empty");
-        }
-
-        return result.data;
-      })();
-    }
-
-    return Promise.race([
-      generator,
-      new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error("AI response timeout")), timeoutMs)
-      ),
-    ]);
-  };
-
-  /**
    * Log analytics in background (non-blocking)
    */
   private logAnalyticsAsync = (data: {
@@ -109,110 +65,60 @@ export class PublicController {
    * POST /api/public/agents/:agentId/chat
    * @access Public (API key required)
    */
-  chatWithPublicAgent = async (req: Request, res: Response): Promise<Response> => {
-    return handleAsyncOperationStrict(
-      async () => {
-        const startTime = Date.now();
-
-        // Validate
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
+  chatWithPublicAgent = async (req: Request, res: Response): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      errorResponse(res, "Validation failed", 400, errors.array());
+      return;
+    }
+    if (!req.agent) {
+      errorResponse(res, "Agent not found", 404);
+      return;
+    }
+    const { message, context } = req.body;
+    const agent = req.agent;
+    const agentConfig = agent.config as Record<string, unknown>;
+    const systemPrompt = (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
+    const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
+    // Kiểm tra knowledge base (RAG) theo owner
+    const useRag = await this.hasKnowledge(agent.owner_id || "");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.flushHeaders && res.flushHeaders();
+    let fullResponseText = "";
+    try {
+      if (useRag) {
+        const { chatWithRAGStream } = await import("../services/rag.service");
+        for await (const chunk of chatWithRAGStream(fullMessage, agent.owner_id ?? undefined, systemPrompt)) {
+          fullResponseText += chunk;
+          res.write(chunk);
         }
-
-        if (!req.agent) {
-          return errorResponse(res, "Agent not found", 404);
-        }
-
-        // Extract data
-        const { message, context } = req.body;
-        const agent = req.agent;
-        const agentConfig = agent.config as Record<string, unknown>;
-        const systemPrompt =
-          (agentConfig?.systemPrompt as string) || "You are a helpful AI assistant.";
-        const timeoutMs = (agentConfig?.timeout as number) || 90000;
-        const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
-
-        logger.info("Public chat request", {
-          agentId: agent.id,
-          messageLen: message.length,
-          origin: req.get("Origin"),
-        });
-
-        // Check knowledge & generate response
-        const useRag = await this.hasKnowledge(agent.owner_id || "");
-        logger.info(`Using ${useRag ? "RAG" : "direct AI"}`, { agentId: agent.id });
-
-        const aiStart = Date.now();
-        let response: string;
-
-        try {
-          response = await this.generateWithTimeout(
-            fullMessage,
-            systemPrompt,
-            agent.owner_id,
-            useRag,
-            timeoutMs
-          );
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : "Unknown error";
-          logger.error("AI failed", {
-            agentId: agent.id,
-            error: msg,
-            duration: Date.now() - aiStart,
-          });
-
-          return errorResponse(
-            res,
-            msg.includes("timeout")
-              ? "Request timeout. Please try again."
-              : "Failed to generate response",
-            msg.includes("timeout") ? 504 : 500
-          );
-        }
-
-        // Log analytics (background)
-        this.logAnalyticsAsync({
-          agent_id: agent.id,
-          user_id: agent.owner_id || "public",
-          tenant_id: agent.tenant_id,
-          query: message,
-          response,
-        });
-
-        const aiDuration = Date.now() - aiStart;
-        const totalDuration = Date.now() - startTime;
-
-        logger.info("Chat completed", {
-          agentId: agent.id,
-          aiDuration: `${aiDuration}ms`,
-          totalDuration: `${totalDuration}ms`,
-          useRag,
-        });
-
-        return successResponse(
-          res,
+      } else {
+        const { geminiApi } = await import("../integrations/gemini.api");
+        for await (const chunk of geminiApi.generateContent(
+          `${systemPrompt}\n\nUser: ${fullMessage}\n\n[IMPORTANT: Keep response focused and under 2000 words. Be detailed but concise.]`,
           {
-            response,
-            agent: {
-              id: agent.id,
-              name: agent.name,
-              description: agent.description,
-            },
-            timestamp: new Date().toISOString(),
-            performance: { aiDuration, totalDuration, useRag },
-          },
-          "Chat response generated successfully"
-        );
-      },
-      "chat with public agent",
-      {
-        context: {
-          agentId: req.agent?.id,
-          messageLength: req.body?.message?.length,
-        },
+            model: "gemini-2.5-flash",
+            maxOutputTokens: 3072,
+            temperature: 0.7,
+          }
+        )) {
+          fullResponseText += chunk;
+          res.write(chunk);
+        }
       }
-    );
+      res.end();
+      // log analytics in background
+      this.logAnalyticsAsync({
+        agent_id: agent.id,
+        user_id: agent.owner_id || "public",
+        tenant_id: agent.tenant_id,
+        query: message,
+        response: fullResponseText,
+      });
+    } catch (err) {
+      logger.error("AI streaming error (public)", { error: err });
+      res.status(500).end("Error generating streaming AI response");
+    }
   };
 
   /**

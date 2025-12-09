@@ -10,7 +10,7 @@ import { authService } from "../services/auth.service";
 import { tokenService } from "../services/token.service";
 import { userService } from "../services/user.service";
 import { successResponse, errorResponse } from "../utils/response";
-import { handleAsyncOperationStrict } from "../utils/errorHandler";
+import { handleControllerOperation } from "../utils/errorHandler";
 
 /**
  * Auth Controller Class
@@ -22,7 +22,7 @@ export class AuthController {
    * POST /api/auth/register
    */
   async register(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -56,6 +56,7 @@ export class AuthController {
         );
       },
       "register user",
+      res,
       {
         context: {
           email: req.body?.email,
@@ -70,7 +71,7 @@ export class AuthController {
    * POST /api/auth/login
    */
   async login(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -113,6 +114,7 @@ export class AuthController {
         );
       },
       "login user",
+      res,
       {
         context: {
           email: req.body?.email,
@@ -127,7 +129,7 @@ export class AuthController {
    * POST /api/auth/logout
    */
   async logout(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         if (!req.user?.id) {
           return errorResponse(res, "User not authenticated", 401);
@@ -139,6 +141,7 @@ export class AuthController {
         return successResponse(res, result, "Logout successful");
       },
       "logout user",
+      res,
       {
         context: {
           userId: req.user?.id,
@@ -153,7 +156,7 @@ export class AuthController {
    * POST /api/auth/refresh
    */
   async refreshToken(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -180,6 +183,7 @@ export class AuthController {
         );
       },
       "refresh token",
+      res,
       {
         context: {
           ip: req.ip,
@@ -193,7 +197,7 @@ export class AuthController {
    * GET /api/auth/me
    */
   async getCurrentUser(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         if (!req.user?.id) {
           return errorResponse(res, "User not authenticated", 401);
@@ -232,6 +236,7 @@ export class AuthController {
         );
       },
       "get current user",
+      res,
       {
         context: {
           userId: req.user?.id,
@@ -245,7 +250,7 @@ export class AuthController {
    * POST /api/auth/change-password
    */
   async changePassword(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -265,6 +270,7 @@ export class AuthController {
         return successResponse(res, result, "Password changed successfully");
       },
       "change password",
+      res,
       {
         context: {
           userId: req.user?.id,
@@ -278,7 +284,7 @@ export class AuthController {
    * POST /api/auth/reset-password
    */
   async resetPassword(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -303,6 +309,7 @@ export class AuthController {
         return successResponse(res, result, "Password reset successfully");
       },
       "reset password",
+      res,
       {
         context: {
           adminUserId: req.user?.id,
@@ -317,7 +324,7 @@ export class AuthController {
    * POST /api/auth/verify-email
    */
   async verifyEmail(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -353,6 +360,7 @@ export class AuthController {
         );
       },
       "verify email",
+      res,
       {
         context: {
           ip: req.ip,
@@ -366,7 +374,7 @@ export class AuthController {
    * POST /api/auth/forgot-password
    */
   async forgotPassword(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -408,6 +416,7 @@ export class AuthController {
         return successResponse(res, responsePayload, "Password reset requested");
       },
       "forgot password",
+      res,
       {
         context: {
           email: req.body?.email,
@@ -422,7 +431,7 @@ export class AuthController {
    * POST /api/auth/request-verify-email
    */
   async sendTokenVerifyEmail(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -469,6 +478,7 @@ export class AuthController {
         return successResponse(res, payload, "Verification email requested");
       },
       "request verify email",
+      res,
       {
         context: {
           email: req.body?.email,
@@ -483,7 +493,7 @@ export class AuthController {
    * POST /api/auth/reset-password-with-token
    */
   async resetPasswordWithToken(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         // Check validation results
         const errors = validationResult(req);
@@ -512,6 +522,7 @@ export class AuthController {
         );
       },
       "reset password with token",
+      res,
       {
         context: {
           ip: req.ip,
@@ -527,7 +538,7 @@ export class AuthController {
    * @returns Response with user data
    */
   async verifyToken(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         const { token } = req.body;
 
@@ -553,6 +564,7 @@ export class AuthController {
         );
       },
       "verify token",
+      res,
       {
         context: {
           ip: req.ip,
@@ -568,7 +580,7 @@ export class AuthController {
    * @access Private
    */
   async getUserSessions(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         if (!req.user?.id) {
           return errorResponse(res, "User not authenticated", 401);
@@ -586,6 +598,7 @@ export class AuthController {
         );
       },
       "get user sessions",
+      res,
       {
         context: {
           userId: req.user?.id,
@@ -600,7 +613,7 @@ export class AuthController {
    * @access Private
    */
   async logoutAll(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         if (!req.user?.id) {
           return errorResponse(res, "User not authenticated", 401);
@@ -615,6 +628,7 @@ export class AuthController {
         );
       },
       "logout all devices",
+      res,
       {
         context: {
           userId: req.user?.id,
@@ -630,7 +644,7 @@ export class AuthController {
    * @access Private
    */
   async revokeSession(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -648,6 +662,7 @@ export class AuthController {
         return successResponse(res, null, "Session revoked successfully");
       },
       "revoke session",
+      res,
       {
         context: {
           userId: req.user?.id,
@@ -663,7 +678,7 @@ export class AuthController {
    * @access Public
    */
   async checkEmailExists(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
+    return handleControllerOperation(
       async () => {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -685,6 +700,7 @@ export class AuthController {
         );
       },
       "check email exists",
+      res,
       {
         context: {
           email: req.body?.email,
