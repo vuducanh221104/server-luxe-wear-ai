@@ -458,7 +458,9 @@ export class AgentController {
           tenantId: req.tenant.id,
         });
 
-        const { FunctionCallingService } = await import("../tools/services/function.calling.service");
+        const { FunctionCallingService } = await import(
+          "../tools/services/function.calling.service"
+        );
         const functionCallingService = new FunctionCallingService();
 
         const toolContext = {
@@ -484,10 +486,12 @@ export class AgentController {
 
         // Send tool execution info
         if (result.toolsCalled > 0) {
-          res.write(`data: ${JSON.stringify({ 
-            toolsUsed: result.toolsCalled,
-            toolResults: result.toolResults 
-          })}\n\n`);
+          res.write(
+            `data: ${JSON.stringify({
+              toolsUsed: result.toolsCalled,
+              toolResults: result.toolResults,
+            })}\n\n`
+          );
         }
       } else if (useRag) {
         // Use RAG pipeline with knowledge base

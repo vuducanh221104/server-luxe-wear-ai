@@ -17,25 +17,29 @@ const SECRET_CODE = `OMEGA-X-${Math.floor(Math.random() * 1000)}`;
 /**
  * Read SSE stream and collect full response
  */
-async function readSSEStream(url: string, data: object, headers: Record<string, string>): Promise<string> {
+async function readSSEStream(
+  url: string,
+  data: object,
+  headers: Record<string, string>
+): Promise<string> {
   return new Promise(async (resolve, reject) => {
     try {
       const response = await axios.post(url, data, {
         headers: {
           ...headers,
-          'Accept': 'text/event-stream',
+          Accept: "text/event-stream",
         },
-        responseType: 'stream',
+        responseType: "stream",
       });
 
-      let fullResponse = '';
-      
-      response.data.on('data', (chunk: Buffer) => {
+      let fullResponse = "";
+
+      response.data.on("data", (chunk: Buffer) => {
         const text = chunk.toString();
         // Parse SSE format: data: {"chunk":"..."}\n\n
-        const lines = text.split('\n');
+        const lines = text.split("\n");
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
+          if (line.startsWith("data: ")) {
             try {
               const jsonStr = line.slice(6); // Remove 'data: '
               const parsed = JSON.parse(jsonStr);
@@ -52,11 +56,11 @@ async function readSSEStream(url: string, data: object, headers: Record<string, 
         }
       });
 
-      response.data.on('end', () => {
+      response.data.on("end", () => {
         resolve(fullResponse);
       });
 
-      response.data.on('error', (err: Error) => {
+      response.data.on("error", (err: Error) => {
         reject(err);
       });
     } catch (error) {
@@ -148,7 +152,7 @@ async function runDeepVerification() {
 
     // 4. Ask for the Secret (using SSE streaming with Function Calling)
     console.log(`\nStep 4: Asking Agent for the Secret (via streaming with useTools: true)...`);
-    
+
     const response = await readSSEStream(
       `${BASE_URL}/agents/${agentId}/chat`,
       {
@@ -159,16 +163,16 @@ async function runDeepVerification() {
     );
 
     console.log(`\n=== RESULTS ===`);
-    console.log(`AI Response: "${response.substring(0, 500)}${response.length > 500 ? '...' : ''}"`);
+    console.log(
+      `AI Response: "${response.substring(0, 500)}${response.length > 500 ? "..." : ""}"`
+    );
     console.log(`Expected Secret: ${SECRET_CODE}`);
 
     // 5. Verification Logic
     const foundSecret = response.includes(SECRET_CODE);
 
     if (foundSecret) {
-      console.log(
-        `\n🎉 SUCCESS: AI retrieved the secret code! RAG pipeline is WORKING PERFECTLY.`
-      );
+      console.log(`\n🎉 SUCCESS: AI retrieved the secret code! RAG pipeline is WORKING PERFECTLY.`);
     } else if (response.length > 0) {
       console.log(
         `\n✅ PARTIAL SUCCESS: AI responded (${response.length} chars), but didn't find the exact code.`
@@ -182,7 +186,6 @@ async function runDeepVerification() {
     console.log(`\nStep 5: Cleaning up...`);
     await axios.delete(`${BASE_URL}/agents/${agentId}`, { headers });
     console.log("✅ Agent deleted");
-    
   } catch (error: any) {
     console.error("\n❌ Error during verification:", error.message);
     if (error.response) {
