@@ -116,12 +116,9 @@ describe("FunctionCallingService", () => {
         text: "Here is the result",
       });
 
-      await service.chatWithTools(
-        "Search for something",
-        mockContext,
-        "System prompt",
-        ["search_knowledge"] // enabledTools is just a string array
-      );
+      await service.chatWithTools("Search for something", mockContext, "System prompt", [
+        "search_knowledge",
+      ]);
 
       expect(mockGetFunctionDeclarationsForAgent).toHaveBeenCalledWith(["search_knowledge"]);
     });
@@ -191,116 +188,116 @@ describe("FunctionCallingService", () => {
       expect(result.response).toBe("Fallback response");
     });
 
-    it("should handle max iterations", async () => {
-      const mockDeclarations = [{ name: "search", description: "Search", parameters: {} }];
+    it("should return error message when fallback also fails", async () => {
+      const mockDeclarations = [
+        { name: "search_knowledge", description: "Search", parameters: {} },
+      ];
       mockGetEnabledFunctionDeclarations.mockReturnValue(mockDeclarations);
 
-      // Always return function calls (never complete)
-      mockGenerateContentWithTools.mockResolvedValue({
-        isComplete: false,
-        functionCalls: [{ name: "search", args: { query: "test" } }],
+      // First call fails
+      mockGenerateContentWithTools.mockRejectedValue(new Error("API Error"));
+
+      // Fallback also fails
+      mockGenerateContent.mockImplementation(async function* () {
+        throw new Error("Fallback error");
       });
-
-      mockExecuteFunctionCall.mockResolvedValue({
-        name: "search",
-        response: { success: true, data: {} },
-      });
-
-      mockContinueWithFunctionResults.mockResolvedValue("Partial response");
-
-      // Should stop after reaching a response
-      const result = await service.chatWithTools(
-        "Test",
-        mockContext,
-        "System prompt",
-        undefined,
-        3
-      );
-
-      expect(result).toBeDefined();
-      expect(result.toolsCalled).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  describe("error handling", () => {
-    it("should handle missing tools gracefully", async () => {
-      mockGetEnabledFunctionDeclarations.mockReturnValue([]);
-
-      async function* generateResponse() {
-        yield "Response without tools";
-      }
-      mockGenerateContent.mockReturnValue(generateResponse());
 
       const result = await service.chatWithTools("Test", mockContext, "System prompt");
 
-      expect(result).toBeDefined();
-      expect(result.response).toBe("Response without tools");
+      expect(result.response).toBe("I'm sorry, I encountered an error processing your request.");
     });
 
-    it("should handle missing context gracefully", async () => {
+    it("should record tool results with success status", async () => {
+      const mockDeclarations = [
+        { name: "search_knowledge", description: "Search", parameters: {} },
+      ];
+      mockGetEnabledFunctionDeclarations.mockReturnValue(mockDeclarations);
+
+      mockGenerateContentWithTools.mockResolvedValue({
+        isComplete: false,
+        functionCalls: [{ name: "search_knowledge", args: { query: "test" } }],
+      });
+
+      mockExecuteFunctionCall.mockResolvedValue({
+        name: "search_knowledge",
+        response: { success: true, data: { results: [] } },
+      });
+
+      mockContinueWithFunctionResults.mockResolvedValue("Result");
+
+      const result = await service.chatWithTools("Search", mockContext, "System prompt");
+
+      expect(result.toolResults).toHaveLength(1);
+      expect(result.toolResults![0].toolName).toBe("search_knowledge");
+      expect(result.toolResults![0].success).toBe(true);
+    });
+
+    it("should handle tool with failed response", async () => {
+      const mockDeclarations = [
+        { name: "search_knowledge", description: "Search", parameters: {} },
+      ];
+      mockGetEnabledFunctionDeclarations.mockReturnValue(mockDeclarations);
+
+      mockGenerateContentWithTools.mockResolvedValue({
+        isComplete: false,
+        functionCalls: [{ name: "search_knowledge", args: { query: "test" } }],
+      });
+
+      mockExecuteFunctionCall.mockResolvedValue({
+        name: "search_knowledge",
+        response: { success: false, error: "Not found" },
+      });
+
+      mockContinueWithFunctionResults.mockResolvedValue("No results found");
+
+      const result = await service.chatWithTools("Search", mockContext, "System prompt");
+
+      expect(result.toolResults![0].success).toBe(false);
+    });
+
+    it("should use default system prompt when not provided", async () => {
       async function* generateResponse() {
         yield "Response";
       }
       mockGenerateContent.mockReturnValue(generateResponse());
 
-      const minimalContext = {
-        agentId: "agent-1",
-        tenantId: "tenant-1",
-      };
+      await service.chatWithTools("Test", mockContext);
 
-      const result = await service.chatWithTools("Test", minimalContext, "System prompt");
-
-      expect(result).toBeDefined();
-      expect(result.response).toBe("Response");
+      // Should not throw and should use default prompt
+      expect(mockGenerateContent).toHaveBeenCalled();
     });
-  });
 
-  describe("tool results tracking", () => {
-    it("should track tool execution results", async () => {
-      const mockDeclarations = [{ name: "search", description: "Search", parameters: {} }];
+    it("should handle multiple function calls in parallel", async () => {
+      const mockDeclarations = [
+        { name: "search_knowledge", description: "Search", parameters: {} },
+        { name: "get_user_info", description: "Get user", parameters: {} },
+      ];
       mockGetEnabledFunctionDeclarations.mockReturnValue(mockDeclarations);
 
       mockGenerateContentWithTools.mockResolvedValue({
         isComplete: false,
-        functionCalls: [{ name: "search", args: { query: "test" } }],
+        functionCalls: [
+          { name: "search_knowledge", args: { query: "test" } },
+          { name: "get_user_info", args: { userId: "123" } },
+        ],
       });
 
-      mockExecuteFunctionCall.mockResolvedValue({
-        name: "search",
-        response: { success: true, data: { results: ["item1", "item2"] } },
-      });
+      mockExecuteFunctionCall
+        .mockResolvedValueOnce({
+          name: "search_knowledge",
+          response: { success: true, data: [] },
+        })
+        .mockResolvedValueOnce({
+          name: "get_user_info",
+          response: { success: true, data: { name: "John" } },
+        });
 
-      mockContinueWithFunctionResults.mockResolvedValue("Found results");
+      mockContinueWithFunctionResults.mockResolvedValue("Combined result");
 
-      const result = await service.chatWithTools("Search", mockContext, "System prompt");
+      const result = await service.chatWithTools("Search and get user", mockContext, "System");
 
-      expect(result.toolResults).toBeDefined();
-      expect(result.toolResults!.length).toBe(1);
-      expect(result.toolResults![0].toolName).toBe("search");
-      expect(result.toolResults![0].success).toBe(true);
-    });
-
-    it("should track failed tool executions", async () => {
-      const mockDeclarations = [{ name: "failing_tool", description: "Fails", parameters: {} }];
-      mockGetEnabledFunctionDeclarations.mockReturnValue(mockDeclarations);
-
-      mockGenerateContentWithTools.mockResolvedValue({
-        isComplete: false,
-        functionCalls: [{ name: "failing_tool", args: {} }],
-      });
-
-      mockExecuteFunctionCall.mockResolvedValue({
-        name: "failing_tool",
-        response: { success: false, error: "Tool failed" },
-      });
-
-      mockContinueWithFunctionResults.mockResolvedValue("Sorry, tool failed");
-
-      const result = await service.chatWithTools("Test", mockContext, "System prompt");
-
-      expect(result.toolResults).toBeDefined();
-      expect(result.toolResults!.length).toBe(1);
-      expect(result.toolResults![0].success).toBe(false);
+      expect(result.toolsCalled).toBe(2);
+      expect(result.toolResults).toHaveLength(2);
     });
   });
 });

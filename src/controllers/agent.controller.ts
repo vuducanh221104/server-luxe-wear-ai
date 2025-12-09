@@ -409,7 +409,7 @@ export class AgentController {
       }
 
       const { agentId } = req.params;
-      const { message, context } = req.body;
+      const { message, context, useTools } = req.body;
 
       // Get agent and verify ownership (delegated to service)
       const agent = await agentService.getAgentById(agentId, req.user.id, req.tenant.id);
@@ -446,11 +446,50 @@ export class AgentController {
 
       const aiStartTime = Date.now();
       let fullResponse = "";
-      let generator: AsyncGenerator<string, void, unknown>;
+      let generator: AsyncGenerator<string, void, unknown> | null = null;
 
       const fullMessage = context ? `${context}\n\nUser: ${message}` : message;
 
-      if (useRag) {
+      // Function Calling mode (useTools: true)
+      if (useTools) {
+        logger.info("Using Function Calling with tools", {
+          agentId,
+          userId: req.user.id,
+          tenantId: req.tenant.id,
+        });
+
+        const { FunctionCallingService } = await import("../tools/services/function.calling.service");
+        const functionCallingService = new FunctionCallingService();
+
+        const toolContext = {
+          userId: req.user.id,
+          tenantId: req.tenant.id,
+          agentId,
+        };
+
+        const result = await functionCallingService.chatWithTools(
+          fullMessage,
+          toolContext,
+          systemPrompt
+        );
+
+        fullResponse = result.response;
+
+        // Stream the response in chunks to maintain SSE format
+        const chunkSize = 50;
+        for (let i = 0; i < fullResponse.length; i += chunkSize) {
+          const chunk = fullResponse.slice(i, i + chunkSize);
+          res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+        }
+
+        // Send tool execution info
+        if (result.toolsCalled > 0) {
+          res.write(`data: ${JSON.stringify({ 
+            toolsUsed: result.toolsCalled,
+            toolResults: result.toolResults 
+          })}\n\n`);
+        }
+      } else if (useRag) {
         // Use RAG pipeline with knowledge base
         logger.info("Using streaming RAG pipeline with knowledge base");
         const { streamChatWithRAG } = await import("../services/rag.service");
@@ -468,10 +507,12 @@ export class AgentController {
         });
       }
 
-      // Stream the response
-      for await (const chunk of generator) {
-        fullResponse += chunk;
-        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      // Stream the response (only if generator was created - not for useTools)
+      if (generator) {
+        for await (const chunk of generator) {
+          fullResponse += chunk;
+          res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+        }
       }
 
       const aiDuration = Date.now() - aiStartTime;
@@ -499,6 +540,7 @@ export class AgentController {
         aiDuration: `${aiDuration}ms`,
         totalDuration: `${totalDuration}ms`,
         usedRag: useRag,
+        usedTools: !!useTools,
       });
     } catch (error) {
       logger.error("Agent streaming chat failed", {

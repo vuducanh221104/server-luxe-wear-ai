@@ -22,9 +22,7 @@ jest.mock("../../../src/services/vector.service", () => ({
 
 jest.mock("../../../src/services/ai.service", () => ({
   defaultAIService: {
-    gemini: {
-      generateContent: jest.fn(),
-    },
+    streamGenerateResponse: jest.fn(),
   },
 }));
 
@@ -49,7 +47,7 @@ describe("RAGService", () => {
     ragService = new RAGService();
   });
 
-  describe("chatWithRAGStream", () => {
+  describe("streamChatWithRAG", () => {
     it("should stream RAG response with context", async () => {
       const {
         getCachedEmbedding,
@@ -75,14 +73,14 @@ describe("RAGService", () => {
 
       // Mock AI streaming
       const chunks = ["Hello", " ", "World"];
-      defaultAIService.gemini.generateContent.mockImplementation(async function* () {
+      defaultAIService.streamGenerateResponse = jest.fn().mockImplementation(async function* () {
         for (const chunk of chunks) {
           yield chunk;
         }
       });
 
       const result: string[] = [];
-      for await (const chunk of ragService.chatWithRAGStream(
+      for await (const chunk of ragService.streamChatWithRAG(
         "What is fashion?",
         "user-1",
         "You are a fashion assistant"
@@ -111,12 +109,12 @@ describe("RAGService", () => {
       getCachedSearchResults.mockResolvedValue([]);
       vectorService.buildContextOptimized.mockResolvedValue("");
 
-      defaultAIService.gemini.generateContent.mockImplementation(async function* () {
+      defaultAIService.streamGenerateResponse = jest.fn().mockImplementation(async function* () {
         yield "No context available";
       });
 
       const result: string[] = [];
-      for await (const chunk of ragService.chatWithRAGStream("test", "user-1")) {
+      for await (const chunk of ragService.streamChatWithRAG("test", "user-1")) {
         result.push(chunk);
       }
 
@@ -137,18 +135,20 @@ describe("RAGService", () => {
       getCachedSearchResults.mockResolvedValue([]);
       vectorService.buildContextOptimized.mockResolvedValue("");
 
-      defaultAIService.gemini.generateContent.mockImplementation(async function* () {
+      defaultAIService.streamGenerateResponse = jest.fn().mockImplementation(async function* () {
         yield "Response";
       });
 
       const result: string[] = [];
-      for await (const chunk of ragService.chatWithRAGStream("test")) {
+      for await (const chunk of ragService.streamChatWithRAG("test")) {
         result.push(chunk);
       }
 
-      expect(defaultAIService.gemini.generateContent).toHaveBeenCalledWith(
-        expect.stringContaining("You are a helpful fashion AI assistant"),
-        expect.any(Object)
+      expect(defaultAIService.streamGenerateResponse).toHaveBeenCalledWith(
+        "test",
+        "",
+        "You are a helpful fashion AI assistant.",
+        undefined
       );
     });
 
@@ -166,12 +166,12 @@ describe("RAGService", () => {
       getCachedSearchResults.mockResolvedValue([]);
       vectorService.buildContextOptimized.mockResolvedValue("");
 
-      defaultAIService.gemini.generateContent.mockImplementation(async function* () {
+      defaultAIService.streamGenerateResponse = jest.fn().mockImplementation(async function* () {
         yield "Response";
       });
 
       const result: string[] = [];
-      for await (const chunk of ragService.chatWithRAGStream("test", undefined)) {
+      for await (const chunk of ragService.streamChatWithRAG("test", undefined)) {
         result.push(chunk);
       }
 
@@ -194,11 +194,11 @@ describe("RAGService", () => {
       ]);
       vectorService.buildContextOptimized.mockResolvedValue("Context");
 
-      defaultAIService.gemini.generateContent.mockImplementation(async function* () {
+      defaultAIService.streamGenerateResponse = jest.fn().mockImplementation(async function* () {
         yield "Response";
       });
 
-      for await (const _ of ragService.chatWithRAGStream("test", "user-1")) {
+      for await (const _ of ragService.streamChatWithRAG("test", "user-1")) {
         // consume iterator
       }
 
@@ -207,6 +207,31 @@ describe("RAGService", () => {
         expect.any(Array),
         29000 // 30000 - 1000
       );
+    });
+
+    it("should throw error when AI streaming fails", async () => {
+      const {
+        getCachedEmbedding,
+        getCachedSearchResults,
+        getCachedTokenCount,
+      } = require("../../../src/utils/cache");
+      const { vectorService } = require("../../../src/services/vector.service");
+      const { defaultAIService } = require("../../../src/services/ai.service");
+
+      getCachedEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
+      getCachedTokenCount.mockResolvedValue(10);
+      getCachedSearchResults.mockResolvedValue([]);
+      vectorService.buildContextOptimized.mockResolvedValue("");
+
+      defaultAIService.streamGenerateResponse = jest.fn().mockImplementation(async function* () {
+        throw new Error("AI error");
+      });
+
+      await expect(async () => {
+        for await (const _ of ragService.streamChatWithRAG("test")) {
+          // consume
+        }
+      }).rejects.toThrow("Failed to generate streaming AI response");
     });
   });
 });

@@ -19,23 +19,20 @@ jest.mock("../../../src/config/logger", () => ({
   debug: jest.fn(),
 }));
 
-jest.mock("../../../src/config/supabase", () => ({
-  supabaseAdmin: {
-    from: jest.fn().mockReturnThis(),
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+jest.mock("../../../src/services/agent.service", () => ({
+  agentService: {
+    hasKnowledge: jest.fn(),
+    logChatAnalytics: jest.fn().mockResolvedValue(undefined),
   },
 }));
 
 jest.mock("../../../src/services/rag.service", () => ({
-  chatWithRAGStream: jest.fn(),
+  streamChatWithRAG: jest.fn(),
 }));
 
 jest.mock("../../../src/integrations/gemini.api", () => ({
   geminiApi: {
-    generateContent: jest.fn(),
+    streamGenerateContent: jest.fn(),
   },
 }));
 
@@ -74,6 +71,7 @@ describe("PublicController", () => {
       flushHeaders: jest.fn(),
       write: jest.fn(),
       end: jest.fn(),
+      headersSent: false,
     };
 
     mockReq = {
@@ -172,125 +170,134 @@ describe("PublicController", () => {
       expect(mockRes.status).toHaveBeenCalledWith(404);
     });
 
-    it("should set correct headers for streaming", async () => {
+    it("should set correct headers for SSE streaming", async () => {
       mockReq.body = { message: "Hello" };
-      const { supabaseAdmin } = require("../../../src/config/supabase");
-
-      // Mock no knowledge base
-      supabaseAdmin.from.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ count: 0 }),
-          }),
-        }),
-      });
+      const { agentService } = require("../../../src/services/agent.service");
+      agentService.hasKnowledge.mockResolvedValue(false);
 
       const { geminiApi } = require("../../../src/integrations/gemini.api");
-      geminiApi.generateContent.mockImplementation(async function* () {
+      geminiApi.streamGenerateContent.mockImplementation(async function* () {
         yield "Response";
       });
 
       await publicController.chatWithPublicAgent(mockReq as Request, mockRes as Response);
 
-      expect(mockRes.setHeader).toHaveBeenCalledWith("Content-Type", "text/plain; charset=utf-8");
+      expect(mockRes.setHeader).toHaveBeenCalledWith("Content-Type", "text/event-stream");
+      expect(mockRes.setHeader).toHaveBeenCalledWith("Cache-Control", "no-cache");
+      expect(mockRes.setHeader).toHaveBeenCalledWith("Connection", "keep-alive");
     });
 
-    it("should stream response without RAG when no knowledge base", async () => {
+    it("should stream response in SSE format without RAG", async () => {
       mockReq.body = { message: "Hello" };
-      const { supabaseAdmin } = require("../../../src/config/supabase");
-
-      // Mock no knowledge base
-      supabaseAdmin.from.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ count: 0 }),
-          }),
-        }),
-      });
+      const { agentService } = require("../../../src/services/agent.service");
+      agentService.hasKnowledge.mockResolvedValue(false);
 
       const { geminiApi } = require("../../../src/integrations/gemini.api");
-      geminiApi.generateContent.mockImplementation(async function* () {
+      geminiApi.streamGenerateContent.mockImplementation(async function* () {
         yield "Hello ";
         yield "World";
       });
 
       await publicController.chatWithPublicAgent(mockReq as Request, mockRes as Response);
 
-      expect(mockRes.write).toHaveBeenCalledWith("Hello ");
-      expect(mockRes.write).toHaveBeenCalledWith("World");
+      // SSE format: data: {JSON}\n\n
+      expect(mockRes.write).toHaveBeenCalledWith('data: {"chunk":"Hello "}\n\n');
+      expect(mockRes.write).toHaveBeenCalledWith('data: {"chunk":"World"}\n\n');
+      expect(mockRes.write).toHaveBeenCalledWith('data: {"done":true}\n\n');
       expect(mockRes.end).toHaveBeenCalled();
     });
 
     it("should use RAG when knowledge base exists", async () => {
       mockReq.body = { message: "Hello" };
-      const { supabaseAdmin } = require("../../../src/config/supabase");
+      const { agentService } = require("../../../src/services/agent.service");
+      agentService.hasKnowledge.mockResolvedValue(true);
 
-      // Mock knowledge base exists
-      supabaseAdmin.from.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ count: 5 }),
-          }),
-        }),
-      });
-
-      const { chatWithRAGStream } = require("../../../src/services/rag.service");
-      chatWithRAGStream.mockImplementation(async function* () {
+      const { streamChatWithRAG } = require("../../../src/services/rag.service");
+      streamChatWithRAG.mockImplementation(async function* () {
         yield "RAG Response";
       });
 
       await publicController.chatWithPublicAgent(mockReq as Request, mockRes as Response);
 
-      expect(chatWithRAGStream).toHaveBeenCalled();
-      expect(mockRes.write).toHaveBeenCalledWith("RAG Response");
+      expect(streamChatWithRAG).toHaveBeenCalled();
+      expect(mockRes.write).toHaveBeenCalledWith('data: {"chunk":"RAG Response"}\n\n');
     });
 
     it("should include context in message when provided", async () => {
       mockReq.body = { message: "Hello", context: "Previous conversation" };
-      const { supabaseAdmin } = require("../../../src/config/supabase");
-
-      supabaseAdmin.from.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ count: 0 }),
-          }),
-        }),
-      });
+      const { agentService } = require("../../../src/services/agent.service");
+      agentService.hasKnowledge.mockResolvedValue(false);
 
       const { geminiApi } = require("../../../src/integrations/gemini.api");
-      geminiApi.generateContent.mockImplementation(async function* () {
+      geminiApi.streamGenerateContent.mockImplementation(async function* () {
         yield "Response";
       });
 
       await publicController.chatWithPublicAgent(mockReq as Request, mockRes as Response);
 
-      expect(geminiApi.generateContent).toHaveBeenCalledWith(
+      expect(geminiApi.streamGenerateContent).toHaveBeenCalledWith(
         expect.stringContaining("Previous conversation"),
         expect.any(Object)
       );
     });
 
-    it("should handle streaming errors", async () => {
+    it("should handle streaming errors before headers sent", async () => {
       mockReq.body = { message: "Hello" };
-      const { supabaseAdmin } = require("../../../src/config/supabase");
+      const { agentService } = require("../../../src/services/agent.service");
+      agentService.hasKnowledge.mockRejectedValue(new Error("Service error"));
 
-      supabaseAdmin.from.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ count: 0 }),
-          }),
-        }),
+      await publicController.chatWithPublicAgent(mockReq as Request, mockRes as Response);
+
+      expect(mockRes.status).toHaveBeenCalledWith(500);
+    });
+
+    it("should send error event when streaming fails after headers sent", async () => {
+      mockReq.body = { message: "Hello" };
+      const { agentService } = require("../../../src/services/agent.service");
+      agentService.hasKnowledge.mockResolvedValue(false);
+
+      // Mock headersSent as true after setHeader is called
+      let headersSent = false;
+      mockRes.setHeader = jest.fn().mockImplementation(() => {
+        headersSent = true;
+      });
+      Object.defineProperty(mockRes, "headersSent", {
+        get: () => headersSent,
       });
 
       const { geminiApi } = require("../../../src/integrations/gemini.api");
-      geminiApi.generateContent.mockImplementation(async function* () {
+      geminiApi.streamGenerateContent.mockImplementation(async function* () {
+        yield "First chunk";
         throw new Error("Streaming error");
       });
 
       await publicController.chatWithPublicAgent(mockReq as Request, mockRes as Response);
 
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(mockRes.end).toHaveBeenCalledWith("Error generating streaming AI response");
+      // Should have written first chunk then error
+      expect(mockRes.write).toHaveBeenCalledWith('data: {"chunk":"First chunk"}\n\n');
+      expect(mockRes.write).toHaveBeenCalledWith('data: {"error":"Stream failed"}\n\n');
+      expect(mockRes.end).toHaveBeenCalled();
+    });
+
+    it("should log analytics asynchronously after completion", async () => {
+      mockReq.body = { message: "Hello" };
+      const { agentService } = require("../../../src/services/agent.service");
+      agentService.hasKnowledge.mockResolvedValue(false);
+
+      const { geminiApi } = require("../../../src/integrations/gemini.api");
+      geminiApi.streamGenerateContent.mockImplementation(async function* () {
+        yield "Response";
+      });
+
+      await publicController.chatWithPublicAgent(mockReq as Request, mockRes as Response);
+
+      expect(agentService.logChatAnalytics).toHaveBeenCalledWith(
+        "agent-1",
+        "user-1",
+        "tenant-1",
+        "Hello",
+        "Response"
+      );
     });
   });
 });

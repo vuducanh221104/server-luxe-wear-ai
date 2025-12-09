@@ -9,9 +9,9 @@ import { GeminiApiIntegration } from "../../../src/integrations/gemini.api";
 // Mock dependencies
 jest.mock("../../../src/integrations/gemini.api", () => ({
   geminiApi: {
-    generateContent: jest.fn(),
     countTokens: jest.fn(),
     healthCheck: jest.fn(),
+    streamGenerateRAGResponse: jest.fn(),
   },
   GeminiApiIntegration: jest.fn(),
 }));
@@ -33,12 +33,6 @@ jest.mock("../../../src/utils/cache", () => ({
   clearCacheByPattern: jest.fn(() => 0),
 }));
 
-jest.mock("../../../src/tools", () => ({
-  functionCallingService: {
-    chatWithTools: jest.fn(),
-  },
-}));
-
 describe("AIService", () => {
   let aiService: AIService;
   let mockGeminiApi: jest.Mocked<GeminiApiIntegration>;
@@ -47,55 +41,12 @@ describe("AIService", () => {
     jest.clearAllMocks();
 
     mockGeminiApi = {
-      generateContent: jest.fn(),
       countTokens: jest.fn(),
       healthCheck: jest.fn(),
+      streamGenerateRAGResponse: jest.fn(),
     } as unknown as jest.Mocked<GeminiApiIntegration>;
 
     aiService = new AIService(mockGeminiApi);
-  });
-
-  describe("generateResponse", () => {
-    it("should generate response from stream", async () => {
-      const chunks = ["Hello", " ", "World"];
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        for (const chunk of chunks) {
-          yield chunk;
-        }
-      });
-
-      const result = await aiService.generateResponse("test message", "context", "prompt");
-
-      expect(result).toBe("Hello World");
-    });
-
-    it("should handle empty response", async () => {
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        // Empty generator
-      });
-
-      const result = await aiService.generateResponse("test", "", "prompt");
-
-      expect(result).toBe("");
-    });
-  });
-
-  describe("generateResponseStream", () => {
-    it("should yield chunks from generator", async () => {
-      const chunks = ["chunk1", "chunk2", "chunk3"];
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        for (const chunk of chunks) {
-          yield chunk;
-        }
-      });
-
-      const result: string[] = [];
-      for await (const chunk of aiService.generateResponseStream("test", "context")) {
-        result.push(chunk);
-      }
-
-      expect(result).toEqual(chunks);
-    });
   });
 
   describe("countTokens", () => {
@@ -111,7 +62,7 @@ describe("AIService", () => {
 
     it("should count tokens without caching", async () => {
       const serviceWithoutCache = new AIService(mockGeminiApi, { enableCaching: false });
-      mockGeminiApi.countTokens = jest.fn().mockResolvedValue(50);
+      mockGeminiApi.countTokens = jest.fn().mockResolvedValue({ success: true, data: 50 });
 
       const result = await serviceWithoutCache.countTokens("test text");
 
@@ -126,11 +77,21 @@ describe("AIService", () => {
 
       expect(result).toBe(0);
     });
+
+    it("should pass userId for logging", async () => {
+      const { getCachedTokenCount } = require("../../../src/utils/cache");
+      getCachedTokenCount.mockResolvedValue(75);
+
+      const result = await aiService.countTokens("test text", "user-123");
+
+      expect(result).toBe(75);
+    });
   });
 
   describe("healthCheck", () => {
     it("should return health status with service stats", async () => {
       mockGeminiApi.healthCheck = jest.fn().mockResolvedValue({
+        success: true,
         isHealthy: true,
         model: "gemini-pro",
       });
@@ -141,6 +102,17 @@ describe("AIService", () => {
       expect(result.serviceStats).toBeDefined();
       expect(result.serviceStats.requestCount).toBeDefined();
     });
+
+    it("should include cache stats in health check", async () => {
+      mockGeminiApi.healthCheck = jest.fn().mockResolvedValue({
+        success: true,
+        isHealthy: true,
+      });
+
+      const result = await aiService.healthCheck();
+
+      expect(result.serviceStats.cacheStats).toBeDefined();
+    });
   });
 
   describe("getStats", () => {
@@ -150,6 +122,11 @@ describe("AIService", () => {
       expect(stats).toHaveProperty("requestCount");
       expect(stats).toHaveProperty("cacheStats");
       expect(stats).toHaveProperty("config");
+    });
+
+    it("should track request count", () => {
+      const initialStats = aiService.getStats();
+      expect(initialStats.requestCount).toBe(0);
     });
   });
 
@@ -181,6 +158,14 @@ describe("AIService", () => {
       expect(newConfig.enableCaching).toBe(originalConfig.enableCaching);
       expect(newConfig.timeout).toBe(60000);
     });
+
+    it("should update multiple config values", () => {
+      aiService.updateConfig({ maxRetries: 5, timeout: 45000 });
+
+      const config = aiService.getConfig();
+      expect(config.maxRetries).toBe(5);
+      expect(config.timeout).toBe(45000);
+    });
   });
 
   describe("getConfig", () => {
@@ -200,6 +185,14 @@ describe("AIService", () => {
       expect(config1).not.toBe(config2);
       expect(config1).toEqual(config2);
     });
+
+    it("should have default values", () => {
+      const config = aiService.getConfig();
+
+      expect(config.enableCaching).toBe(true);
+      expect(config.maxRetries).toBe(3);
+      expect(config.timeout).toBe(30000);
+    });
   });
 
   describe("gemini getter", () => {
@@ -210,108 +203,109 @@ describe("AIService", () => {
     });
   });
 
-  describe("analyzeSentiment", () => {
-    it("should analyze text sentiment", async () => {
-      const mockResponse = JSON.stringify({
-        sentiment: "positive",
-        confidence: 0.95,
-        explanation: "The text expresses positive emotions",
+  describe("streamGenerateResponse", () => {
+    it("should stream response chunks", async () => {
+      const chunks = ["Hello", " ", "World"];
+      mockGeminiApi.streamGenerateRAGResponse = jest.fn().mockImplementation(async function* () {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
       });
 
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        yield mockResponse;
-      });
+      const result: string[] = [];
+      for await (const chunk of aiService.streamGenerateResponse(
+        "test message",
+        "context",
+        "system prompt"
+      )) {
+        result.push(chunk);
+      }
 
-      const result = await aiService.analyzeSentiment("I love this product!");
-
-      expect(result.sentiment).toBe("positive");
-      expect(result.confidence).toBe(0.95);
+      expect(result).toEqual(chunks);
     });
 
-    it("should throw error when parsing fails", async () => {
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        yield "invalid json";
+    it("should increment request count", async () => {
+      mockGeminiApi.streamGenerateRAGResponse = jest.fn().mockImplementation(async function* () {
+        yield "chunk";
       });
 
-      await expect(aiService.analyzeSentiment("test")).rejects.toThrow();
-    });
-  });
+      const initialCount = aiService.getStats().requestCount;
 
-  describe("extractKeywords", () => {
-    it("should extract keywords from text", async () => {
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        yield "fashion, style, trend, clothing, design";
-      });
+      for await (const _ of aiService.streamGenerateResponse("test", "context")) {
+        // consume
+      }
 
-      const result = await aiService.extractKeywords("Fashion trends for 2024", 5);
-
-      expect(result).toContain("fashion");
-      expect(result).toContain("style");
-      expect(result.length).toBeLessThanOrEqual(5);
+      const newCount = aiService.getStats().requestCount;
+      expect(newCount).toBe(initialCount + 1);
     });
 
-    it("should return empty array for non-string response", async () => {
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        // Empty response
+    it("should use default system prompt when not provided", async () => {
+      mockGeminiApi.streamGenerateRAGResponse = jest.fn().mockImplementation(async function* () {
+        yield "response";
       });
 
-      const result = await aiService.extractKeywords("test");
+      for await (const _ of aiService.streamGenerateResponse("test", "context")) {
+        // consume
+      }
+
+      expect(mockGeminiApi.streamGenerateRAGResponse).toHaveBeenCalledWith(
+        "test",
+        "context",
+        "You are a helpful fashion AI assistant."
+      );
+    });
+
+    it("should handle empty response", async () => {
+      mockGeminiApi.streamGenerateRAGResponse = jest.fn().mockImplementation(async function* () {
+        // Empty generator
+      });
+
+      const result: string[] = [];
+      for await (const chunk of aiService.streamGenerateResponse("test", "context")) {
+        result.push(chunk);
+      }
 
       expect(result).toEqual([]);
     });
-  });
 
-  describe("summarizeText", () => {
-    it("should summarize text", async () => {
-      const summary = "This is a summary.";
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        yield summary;
+    it("should pass userId for logging", async () => {
+      mockGeminiApi.streamGenerateRAGResponse = jest.fn().mockImplementation(async function* () {
+        yield "chunk";
       });
 
-      const result = await aiService.summarizeText("Long text to summarize...", 200);
+      for await (const _ of aiService.streamGenerateResponse(
+        "test",
+        "context",
+        "prompt",
+        "user-123"
+      )) {
+        // consume
+      }
 
-      expect(result).toBe(summary);
+      expect(mockGeminiApi.streamGenerateRAGResponse).toHaveBeenCalled();
     });
   });
 
-  describe("translateText", () => {
-    it("should translate text to target language", async () => {
-      const translation = "Bonjour le monde";
-      mockGeminiApi.generateContent = jest.fn().mockImplementation(async function* () {
-        yield translation;
-      });
-
-      const result = await aiService.translateText("Hello world", "French");
-
-      expect(result).toBe(translation);
+  describe("constructor", () => {
+    it("should use default gemini instance when not provided", () => {
+      // This tests the fallback to singleton
+      const service = new AIService();
+      expect(service.gemini).toBeDefined();
     });
-  });
 
-  describe("generateResponseWithTools", () => {
-    it("should generate response with function calling", async () => {
-      const { functionCallingService } = require("../../../src/tools");
-      functionCallingService.chatWithTools.mockResolvedValue({
-        response: "AI response",
-        toolsCalled: ["search_knowledge"],
-        toolResults: [],
-        executionTime: 100,
-      });
-
-      const context = {
-        agentId: "agent-1",
-        tenantId: "tenant-1",
-        userId: "user-1",
+    it("should apply custom config", () => {
+      const customConfig = {
+        enableCaching: false,
+        maxRetries: 5,
+        timeout: 60000,
       };
 
-      const result = await aiService.generateResponseWithTools(
-        "Search my knowledge base",
-        context,
-        "You are helpful",
-        ["search_knowledge"]
-      );
+      const service = new AIService(mockGeminiApi, customConfig);
+      const config = service.getConfig();
 
-      expect(result.response).toBe("AI response");
-      expect(result.toolsCalled).toContain("search_knowledge");
+      expect(config.enableCaching).toBe(false);
+      expect(config.maxRetries).toBe(5);
+      expect(config.timeout).toBe(60000);
     });
   });
 });

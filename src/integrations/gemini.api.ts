@@ -5,7 +5,12 @@
  * Updated for multi-tenancy support with tenant-aware logging
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  GoogleGenerativeAI,
+  FunctionDeclaration,
+  Content,
+  FunctionCallingMode,
+} from "@google/generative-ai";
 import logger from "../config/logger";
 import type {
   GeminiConfig,
@@ -15,6 +20,18 @@ import type {
   HealthCheckData,
 } from "../types/gemini";
 import type { TenantContext } from "../types/tenant";
+
+/**
+ * Response from function calling generation
+ */
+export interface FunctionCallingResponse {
+  isComplete: boolean;
+  text?: string;
+  functionCalls?: Array<{
+    name: string;
+    args: Record<string, unknown>;
+  }>;
+}
 
 /**
  * Gemini API integration class
@@ -365,6 +382,198 @@ Please provide a helpful and accurate response based on the context above.`;
       "healthCheck",
       tenantContext
     );
+  }
+
+  // ========================================
+  // FUNCTION CALLING METHODS
+  // ========================================
+
+  /**
+   * Generate content with function calling (tools)
+   * Non-streaming for proper function call parsing
+   * @param prompt - The prompt to generate content from
+   * @param tools - Array of function declarations
+   * @param options - Generation options
+   * @param tenantContext - Tenant context for logging
+   * @returns Function calling response with either text or function calls
+   */
+  async generateContentWithTools(
+    prompt: string,
+    tools: FunctionDeclaration[],
+    options: GenerationOptions = {},
+    tenantContext?: TenantContext
+  ): Promise<FunctionCallingResponse> {
+    const startTime = Date.now();
+    const operationName = "generateContentWithTools";
+
+    try {
+      logger.debug(`Executing ${operationName}`, {
+        tenantId: tenantContext?.id,
+        toolCount: tools.length,
+      });
+
+      const model = options.model || this.selectModel(options.useCase);
+
+      // Get the model instance with tools
+      const modelInstance = this.genAI.getGenerativeModel({
+        model: model,
+        generationConfig: {
+          temperature: options.temperature || 0.7,
+          maxOutputTokens: options.maxOutputTokens || 8192,
+        },
+        tools: [{ functionDeclarations: tools }],
+        toolConfig: {
+          functionCallingConfig: {
+            mode: FunctionCallingMode.AUTO,
+          },
+        },
+      });
+
+      // Generate content (non-streaming for function calling)
+      const result = await modelInstance.generateContent(prompt);
+      const response = result.response;
+
+      // Check for function calls
+      const functionCalls = response.functionCalls();
+
+      if (functionCalls && functionCalls.length > 0) {
+        const duration = Date.now() - startTime;
+        logger.info(`${operationName} returned function calls`, {
+          duration,
+          functionCount: functionCalls.length,
+          functions: functionCalls.map((fc) => fc.name),
+          tenantId: tenantContext?.id,
+        });
+
+        return {
+          isComplete: false,
+          functionCalls: functionCalls.map((fc) => ({
+            name: fc.name,
+            args: fc.args as Record<string, unknown>,
+          })),
+        };
+      }
+
+      // No function calls, return text response
+      const text = response.text();
+      const duration = Date.now() - startTime;
+
+      logger.info(`${operationName} completed with text response`, {
+        duration,
+        textLength: text?.length || 0,
+        tenantId: tenantContext?.id,
+      });
+
+      return {
+        isComplete: true,
+        text: text || "",
+      };
+    } catch (error) {
+      const lastError = error instanceof Error ? error : new Error(String(error));
+      const duration = Date.now() - startTime;
+
+      logger.error(`${operationName} failed`, {
+        duration,
+        error: lastError.message,
+        tenantId: tenantContext?.id,
+      });
+
+      throw lastError;
+    }
+  }
+
+  /**
+   * Continue conversation after function execution
+   * @param chatHistory - Previous conversation history
+   * @param functionResponses - Results from executed functions
+   * @param tools - Array of function declarations
+   * @param options - Generation options
+   * @param tenantContext - Tenant context for logging
+   * @returns Final text response from AI
+   */
+  async continueWithFunctionResults(
+    chatHistory: Content[],
+    functionResponses: Array<{ name: string; response: Record<string, unknown> }>,
+    tools: FunctionDeclaration[],
+    options: GenerationOptions = {},
+    tenantContext?: TenantContext
+  ): Promise<string> {
+    const startTime = Date.now();
+    const operationName = "continueWithFunctionResults";
+
+    try {
+      logger.debug(`Executing ${operationName}`, {
+        tenantId: tenantContext?.id,
+        functionCount: functionResponses.length,
+        historyLength: chatHistory.length,
+      });
+
+      const model = options.model || this.selectModel(options.useCase);
+
+      // Get the model instance with tools
+      const modelInstance = this.genAI.getGenerativeModel({
+        model: model,
+        generationConfig: {
+          temperature: options.temperature || 0.7,
+          maxOutputTokens: options.maxOutputTokens || 8192,
+        },
+        tools: [{ functionDeclarations: tools }],
+      });
+
+      // Start chat with history
+      const chat = modelInstance.startChat({
+        history: chatHistory,
+      });
+
+      // Send function responses
+      const functionResponseParts = functionResponses.map((fr) => ({
+        functionResponse: {
+          name: fr.name,
+          response: fr.response,
+        },
+      }));
+
+      const result = await chat.sendMessage(functionResponseParts);
+      const response = result.response;
+      const text = response.text();
+
+      const duration = Date.now() - startTime;
+
+      logger.info(`${operationName} completed`, {
+        duration,
+        textLength: text?.length || 0,
+        tenantId: tenantContext?.id,
+      });
+
+      return text || "";
+    } catch (error) {
+      const lastError = error instanceof Error ? error : new Error(String(error));
+      const duration = Date.now() - startTime;
+
+      logger.error(`${operationName} failed`, {
+        duration,
+        error: lastError.message,
+        tenantId: tenantContext?.id,
+      });
+
+      throw lastError;
+    }
+  }
+
+  /**
+   * Simple non-streaming content generation (for fallback)
+   * @param prompt - The prompt to generate content from
+   * @param options - Generation options
+   * @param tenantContext - Tenant context for logging
+   * @returns Async generator yielding text chunks
+   */
+  async *generateContent(
+    prompt: string,
+    options: GenerationOptions = {},
+    tenantContext?: TenantContext
+  ): AsyncGenerator<string, void, unknown> {
+    // Delegate to streaming for consistency
+    yield* this.streamGenerateContent(prompt, options, tenantContext);
   }
 
   /**
