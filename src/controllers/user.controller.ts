@@ -320,7 +320,24 @@ export class UserController {
         const perPage = parseInt(req.query.perPage as string) || 10;
         const search = req.query.search as string;
 
-        const result = await userService.listUsers(page, perPage, search);
+        // Extract filters
+        const role = req.query.role as string;
+        const is_active_param = req.query.is_active;
+        let is_active: boolean | undefined = undefined;
+        if (is_active_param === 'true') is_active = true;
+        if (is_active_param === 'false') is_active = false;
+
+        // Extract sort
+        const sortField = req.query.sortField as string;
+        const sortOrder = (req.query.sortOrder as string) === 'asc' ? 'asc' : 'desc';
+
+        const result = await userService.listUsers(
+          page,
+          perPage,
+          search,
+          { role, is_active },
+          sortField ? { field: sortField, order: sortOrder } : undefined
+        );
 
         return successResponse(res, result, "Users retrieved successfully");
       },
@@ -331,6 +348,8 @@ export class UserController {
           page: req.query.page,
           perPage: req.query.perPage,
           search: req.query.search,
+          filters: { role: req.query.role, is_active: req.query.is_active },
+          sort: { field: req.query.sortField, order: req.query.sortOrder }
         },
       }
     );
@@ -537,6 +556,86 @@ export class UserController {
       }
     );
   }
+
+  /**
+   * Bulk delete users (admin only)
+   * DELETE /api/users/bulk
+   */
+  async bulkDeleteUsers(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        if (!["admin", "owner", "super_admin"].includes(req.user.role)) {
+          return errorResponse(res, "Admin access required", 403);
+        }
+
+        const { userIds } = req.body;
+
+        if (!Array.isArray(userIds) || userIds.length === 0) {
+          return errorResponse(res, "userIds array is required", 400);
+        }
+
+        // Prevent self-deletion
+        if (userIds.includes(req.user.id)) {
+          return errorResponse(res, "Cannot delete your own account in bulk action", 400);
+        }
+
+        const result = await userService.deleteUsers(userIds);
+
+        return successResponse(res, result, "Users deleted successfully");
+      },
+      "bulk delete users",
+      {
+        context: {
+          adminUserId: req.user?.id,
+          count: req.body.userIds?.length,
+        },
+      }
+    );
+  }
+
+  /**
+   * Bulk update users (admin only)
+   * PUT /api/users/bulk
+   */
+  async bulkUpdateUsers(req: Request, res: Response): Promise<Response> {
+    return handleAsyncOperationStrict(
+      async () => {
+        if (!req.user) {
+          return errorResponse(res, "User not authenticated", 401);
+        }
+
+        if (!["admin", "owner", "super_admin"].includes(req.user.role)) {
+          return errorResponse(res, "Admin access required", 403);
+        }
+
+        const { userIds, data } = req.body;
+
+        if (!Array.isArray(userIds) || userIds.length === 0) {
+          return errorResponse(res, "userIds array is required", 400);
+        }
+
+        if (!data || (data.is_active === undefined && !data.role)) {
+          return errorResponse(res, "Update data (is_active or role) is required", 400);
+        }
+
+        const result = await userService.updateUsers(userIds, data);
+
+        return successResponse(res, result, "Users updated successfully");
+      },
+      "bulk update users",
+      {
+        context: {
+          adminUserId: req.user?.id,
+          count: req.body.userIds?.length,
+          data: req.body.data,
+        },
+      }
+    );
+  }
 }
 
 // Create and export controller instance
@@ -555,6 +654,8 @@ export const {
   updateUserById,
   adminUpdatePassword,
   deleteUserById,
+  bulkDeleteUsers,
+  bulkUpdateUsers,
 } = userController;
 
 export default userController;

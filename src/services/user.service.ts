@@ -254,17 +254,42 @@ export class UserService {
   async listUsers(
     page: number = 1,
     perPage: number = 10,
-    search?: string
+    search?: string,
+    filters?: {
+      role?: string;
+      is_active?: boolean;
+    },
+    sort?: {
+      field: string;
+      order: 'asc' | 'desc';
+    }
   ): Promise<UserListResponse> {
     return handleAsyncOperationStrict(
       async () => {
-        logger.info("Listing users", { page, perPage, search });
+        logger.info("Listing users", { page, perPage, search, filters, sort });
 
         let query = supabaseAdmin.from("users").select("*", { count: "exact" });
 
         // Add search filter
         if (search) {
           query = query.or(`name.ilike.%${search}%,email.ilike.%${search}%`);
+        }
+
+        // Add specific filters
+        if (filters?.role && filters.role !== 'all') {
+          query = query.eq('role', filters.role);
+        }
+
+        if (filters?.is_active !== undefined) {
+          query = query.eq('is_active', filters.is_active);
+        }
+
+        // Add sorting
+        if (sort?.field) {
+          query = query.order(sort.field, { ascending: sort.order === 'asc' });
+        } else {
+          // Default sort
+          query = query.order("created_at", { ascending: false });
         }
 
         // Add pagination
@@ -275,7 +300,7 @@ export class UserService {
           data: users,
           error,
           count,
-        } = await query.order("created_at", { ascending: false }).range(from, to);
+        } = await query.range(from, to);
 
         if (error) {
           throw new Error(error.message);
@@ -301,7 +326,7 @@ export class UserService {
       },
       "list users",
       {
-        context: { page, perPage, search },
+        context: { page, perPage, search, filters, sort },
       }
     );
   }
@@ -538,6 +563,68 @@ export class UserService {
       "get user memberships",
       {
         context: { userId },
+      }
+    );
+  }
+
+  /**
+   * Delete multiple users (admin only)
+   * @param userIds - Array of User IDs
+   * @returns Success message
+   */
+  async deleteUsers(userIds: string[]): Promise<{ message: string; count: number }> {
+    return handleAsyncOperationStrict(
+      async () => {
+        logger.info("Deleting multiple users", { count: userIds.length });
+
+        const { error, count } = await supabaseAdmin
+          .from("users")
+          .delete({ count: "exact" })
+          .in("id", userIds);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        logger.info("Users deleted successfully", { count });
+        return { message: "Users deleted successfully", count: count || 0 };
+      },
+      "delete users",
+      {
+        context: { userIds },
+      }
+    );
+  }
+
+  /**
+   * Update multiple users (admin only)
+   * @param userIds - Array of User IDs
+   * @param data - Update data
+   * @returns Success message
+   */
+  async updateUsers(
+    userIds: string[],
+    data: { is_active?: boolean; role?: string }
+  ): Promise<{ message: string; count: number }> {
+    return handleAsyncOperationStrict(
+      async () => {
+        logger.info("Updating multiple users", { count: userIds.length, data });
+
+        const { error, count } = await supabaseAdmin
+          .from("users")
+          .update(data, { count: "exact" })
+          .in("id", userIds);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        logger.info("Users updated successfully", { count });
+        return { message: "Users updated successfully", count: count || 0 };
+      },
+      "update multiple users",
+      {
+        context: { userIds, data },
       }
     );
   }

@@ -111,6 +111,20 @@ router.delete("/avatar", authMiddleware, userController.deleteAvatar);
 router.get("/", authMiddleware, paginationValidator, userController.listUsers);
 
 /**
+ * PUT /api/users/bulk
+ * Bulk update users (Admin only)
+ * @access Admin
+ */
+router.put("/bulk", authMiddleware, authRateLimiter, userController.bulkUpdateUsers);
+
+/**
+ * DELETE /api/users/bulk
+ * Bulk delete users (Admin only)
+ * @access Admin
+ */
+router.delete("/bulk", authMiddleware, authRateLimiter, userController.bulkDeleteUsers);
+
+/**
  * GET /api/users/:userId
  * Get user by ID (Admin only)
  * @access Admin
