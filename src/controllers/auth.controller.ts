@@ -22,47 +22,51 @@ export class AuthController {
    * POST /api/auth/register
    */
   async register(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
-      async () => {
-        // Check validation results
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
-        }
+    try {
+      return await handleAsyncOperationStrict(
+        async () => {
+          // Check validation results
+          const errors = validationResult(req);
+          if (!errors.isEmpty()) {
+            return errorResponse(res, "Validation failed", 400, errors.array());
+          }
 
-        const { email, password, name } = req.body;
+          const { email, password, name } = req.body;
 
-        // Call service layer
-        const result = await authService.register({ email, password, name });
+          // Call service layer
+          const result = await authService.register({ email, password, name });
 
-        // Registration successful - return user info and tokens
-        return successResponse(
-          res,
-          {
-            user: {
-              id: result.user.id,
-              email: result.user.email,
-              name: result.user.name,
-              role: result.user.role,
-              is_active: result.user.is_active,
-              email_verified: result.user.email_verified,
+          // Registration successful - return user info and tokens
+          return successResponse(
+            res,
+            {
+              user: {
+                id: result.user.id,
+                email: result.user.email,
+                name: result.user.name,
+                role: result.user.role,
+                is_active: result.user.is_active,
+                email_verified: result.user.email_verified,
+              },
+              token: result.token,
+              refreshToken: result.refreshToken,
+              message: result.message,
             },
-            token: result.token,
-            refreshToken: result.refreshToken,
-            message: result.message,
-          },
-          "Registration successful",
-          201
-        );
-      },
-      "register user",
-      {
-        context: {
-          email: req.body?.email,
-          ip: req.ip,
+            "Registration successful",
+            201
+          );
         },
-      }
-    );
+        "register user",
+        {
+          context: {
+            email: req.body?.email,
+            ip: req.ip,
+          },
+        }
+      );
+    } catch (error: any) {
+      return errorResponse(res, error.message || "Registration failed", 400);
+    }
   }
 
   /**
@@ -70,56 +74,61 @@ export class AuthController {
    * POST /api/auth/login
    */
   async login(req: Request, res: Response): Promise<Response> {
-    return handleAsyncOperationStrict(
-      async () => {
-        // Check validation results
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-          return errorResponse(res, "Validation failed", 400, errors.array());
-        }
+    try {
+      return await handleAsyncOperationStrict(
+        async () => {
+          // Check validation results
+          const errors = validationResult(req);
+          if (!errors.isEmpty()) {
+            return errorResponse(res, "Validation failed", 400, errors.array());
+          }
 
-        const { email, password } = req.body;
+          const { email, password } = req.body;
 
-        // Call service layer
-        const result = await authService.login({ email, password });
+          // Call service layer
+          const result = await authService.login({ email, password });
 
-        // Get user memberships for tenant context
-        const memberships = await userService.getUserMemberships(result.user.id);
+          // Get user memberships for tenant context
+          const memberships = await userService.getUserMemberships(result.user.id);
 
-        // Login successful - return user info and tokens
-        return successResponse(
-          res,
-          {
-            user: {
-              id: result.user.id,
-              email: result.user.email,
-              name: result.user.name,
-              role: result.user.role,
-              is_active: result.user.is_active,
-              email_verified: result.user.email_verified,
-              last_login: result.user.last_login,
+          // Login successful - return user info and tokens
+          return successResponse(
+            res,
+            {
+              user: {
+                id: result.user.id,
+                email: result.user.email,
+                name: result.user.name,
+                role: result.user.role,
+                is_active: result.user.is_active,
+                email_verified: result.user.email_verified,
+                last_login: result.user.last_login,
+              },
+              token: result.token,
+              refreshToken: result.refreshToken,
+              message: result.message,
+              tenants: memberships.map((membership) => ({
+                id: membership.tenant_id,
+                role: membership.role,
+                status: membership.status,
+                joined_at: membership.joined_at,
+              })),
             },
-            token: result.token,
-            refreshToken: result.refreshToken,
-            message: result.message,
-            tenants: memberships.map((membership) => ({
-              id: membership.tenant_id,
-              role: membership.role,
-              status: membership.status,
-              joined_at: membership.joined_at,
-            })),
-          },
-          "Login successful"
-        );
-      },
-      "login user",
-      {
-        context: {
-          email: req.body?.email,
-          ip: req.ip,
+            "Login successful"
+          );
         },
-      }
-    );
+        "login user",
+        {
+          context: {
+            email: req.body?.email,
+            ip: req.ip,
+          },
+        }
+      );
+    } catch (error: any) {
+      const status = error.message === "Invalid email or password" ? 401 : 400;
+      return errorResponse(res, error.message || "Login failed", status);
+    }
   }
 
   /**

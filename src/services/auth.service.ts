@@ -41,7 +41,7 @@ export class AuthService {
       }
 
       // Hash password
-      const saltRounds = 12;
+      const saltRounds = 10;
       const password_hash = await bcrypt.hash(password, saltRounds);
 
       // Create user in custom users table
@@ -84,7 +84,7 @@ export class AuthService {
       }
 
       // Generate tokens
-      const token = await this.generateToken(userData.id);
+      const token = await this.generateToken(userData);
       const refreshToken = await this.generateRefreshToken(userData.id);
 
       logger.info("User registered successfully", {
@@ -139,7 +139,7 @@ export class AuthService {
       await this.updateLastLogin(user.id);
 
       // Generate access token
-      const token = await this.generateToken(user.id);
+      const token = await this.generateToken(user);
 
       // Reuse existing active refresh token if available, otherwise create a new one
       const activeRefreshTokens = await tokenService.getUserActiveTokens(user.id, "refresh");
@@ -250,7 +250,7 @@ export class AuthService {
       }
 
       // Generate new access token
-      const token = await this.generateToken(user.id);
+      const token = await this.generateToken(user);
 
       logger.info("Token refreshed successfully", {
         userId: user.id,
@@ -510,9 +510,20 @@ export class AuthService {
    * @param userId - User ID
    * @returns JWT token
    */
-  private async generateToken(userId: string): Promise<string> {
-    // Get user data for token payload
-    const user = await this.getUserById(userId);
+  /**
+   * Generate JWT token
+   * @param userOrId - User object or User ID
+   * @returns JWT token
+   */
+  private async generateToken(userOrId: string | User): Promise<string> {
+    let user: User | null;
+
+    if (typeof userOrId === "string") {
+      user = await this.getUserById(userOrId);
+    } else {
+      user = userOrId;
+    }
+
     if (!user) {
       throw new Error("User not found for token generation");
     }
@@ -579,7 +590,7 @@ export class AuthService {
       }
 
       // Hash new password
-      const saltRounds = 12;
+      const saltRounds = 10;
       const password_hash = await bcrypt.hash(newPassword, saltRounds);
 
       // Update password
@@ -610,7 +621,7 @@ export class AuthService {
       }
 
       // Hash new password
-      const saltRounds = 12;
+      const saltRounds = 10;
       const password_hash = await bcrypt.hash(newPassword, saltRounds);
 
       // Update password
