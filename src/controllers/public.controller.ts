@@ -635,26 +635,6 @@ export class PublicController {
           .replace(codeBlockRegex, '<pre><code>$1</code></pre>');
         
         let citationsHtml = '';
-        if (!isUser && msg.citations && Array.isArray(msg.citations) && msg.citations.length > 0) {
-          citationsHtml = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0;"><div style="font-size: 11px; font-weight: 600; color: #6c757d; margin-bottom: 8px;">📚 Nguồn tham khảo:</div>' +
-            msg.citations.map((citation, cIdx) => {
-              const title = citation.title || citation.fileName || 'Nguồn ' + (cIdx + 1);
-              let details = [];
-              if (citation.fileName && citation.fileName !== citation.title) {
-                details.push('📄 File: ' + escapeHtml(citation.fileName));
-              }
-              if (citation.page !== undefined && citation.page !== null) {
-                details.push('📑 Trang: ' + (citation.page + 1));
-              }
-              if (citation.line !== undefined && citation.line !== null) {
-                details.push('📍 Dòng: ' + (citation.line + 1));
-              }
-              const detailsHtml = details.length > 0 ? '<div style="font-size: 10px; color: #6c757d; margin-top: 4px;">' + details.join(' • ') + '</div>' : '';
-              const contentPreview = citation.content ? '<div style="font-size: 10px; font-style: italic; color: #6c757d; margin-top: 4px; line-height: 1.4; max-height: 40px; overflow: hidden;">"' + escapeHtml(citation.content.substring(0, 150)) + '"</div>' : '';
-              return '<div style="background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px; margin-bottom: 6px; font-size: 11px;"><div style="font-weight: 600; color: #333; margin-bottom: 4px;">📄 ' + escapeHtml(title) + '</div>' + detailsHtml + contentPreview + '</div>';
-            }).join('') +
-            '</div>';
-        }
         
         const messageClass = isUser ? 'user' : 'assistant';
         const avatarText = isUser ? 'You' : 'AI';
