@@ -296,13 +296,13 @@ Please provide a helpful and accurate response based on the context above.`;
           ),
           options.includeMetadata
             ? Promise.all([
-                this.countTokens(prompt, tenantContext),
-                this.countTokens(userMessage, tenantContext), // Count user message instead of response for better performance
-              ])
+              this.countTokens(prompt, tenantContext),
+              this.countTokens(userMessage, tenantContext), // Count user message instead of response for better performance
+            ])
             : Promise.resolve([
-                { success: true, data: 0 },
-                { success: true, data: 0 },
-              ]),
+              { success: true, data: 0 },
+              { success: true, data: 0 },
+            ]),
         ]);
 
         if (!responseResult.success || !responseResult.data) {

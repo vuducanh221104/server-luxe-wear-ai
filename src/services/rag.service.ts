@@ -99,7 +99,7 @@ export class RAGService {
           userId,
           tenantId,
         });
-        
+
         const fallbackResults = await vectorService.searchKnowledgeWithVector(
           queryVector,
           userId,
@@ -107,13 +107,13 @@ export class RAGService {
           5,
           null // Search all knowledge, not just agent-specific
         );
-        
+
         // Filter to only include knowledge linked to this agent or general knowledge
         const filteredFallback = fallbackResults.filter((r: any) => {
           const metaAgentId = r.metadata?.agentId;
           return metaAgentId === agentId || metaAgentId === null || metaAgentId === undefined || metaAgentId === "";
         });
-        
+
         if (filteredFallback.length > 0) {
           logger.info("Fallback search found results", {
             agentId,
@@ -157,9 +157,9 @@ export class RAGService {
         vectorService.buildContextOptimized(searchResults as SearchResult[], 30000 - messageTokens),
         searchResults.length > 0
           ? getCachedTokenCount(
-              (searchResults as SearchResult[]).map((r) => r.metadata.content).join(" "),
-              embeddingService.countTokens.bind(embeddingService)
-            )
+            (searchResults as SearchResult[]).map((r) => r.metadata.content).join(" "),
+            embeddingService.countTokens.bind(embeddingService)
+          )
           : Promise.resolve(0),
       ]);
 
@@ -171,25 +171,25 @@ export class RAGService {
           searchResultsCount: searchResults.length,
           userMessage: userMessage.substring(0, 100), // Log first 100 chars for debugging
         });
-        
+
         // If no context found, still generate response but inform AI that no knowledge was found
         // This allows AI to respond appropriately
         const noContextMessage = context || "";
         const enhancedSystemPrompt = `${systemPrompt}\n\n[NOTE: No relevant knowledge was found in the knowledge base for this query. Please respond based on your general knowledge, but acknowledge if the question is outside your expertise.]`;
-        
+
         const response = await getCachedAIResponse(
           userMessage,
           noContextMessage,
           enhancedSystemPrompt,
           defaultAIService.generateResponse.bind(defaultAIService)
         );
-        
+
         logger.info("RAG chat completed (no context)", {
           agentId,
           contextUsed: false,
           responseLength: response.length,
         });
-        
+
         // Return with empty citations - no knowledge was used
         if (includeCitations) {
           return { response, citations: [] };
@@ -209,15 +209,15 @@ export class RAGService {
       // Only include citations if context was meaningful (not empty and actually used in generation)
       const citations: Citation[] = includeCitations && context && context.trim().length > 0
         ? (searchResults as SearchResult[]).map((result) => ({
-            id: result.id,
-            title: (result.metadata?.title as string) || undefined,
-            fileName: (result.metadata?.fileName as string) || undefined,
-            page: (result.metadata?.page as number) || (result.metadata?.pageNumber as number) || undefined,
-            line: (result.metadata?.line as number) || (result.metadata?.lineNumber as number) || undefined,
-            chunkIndex: (result.metadata?.chunkIndex as number) || undefined,
-            score: result.score,
-            content: (result.metadata?.content as string)?.substring(0, 200) || undefined, // Preview of content
-          }))
+          id: result.id,
+          title: (result.metadata?.title as string) || undefined,
+          fileName: (result.metadata?.fileName as string) || undefined,
+          page: (result.metadata?.page as number) || (result.metadata?.pageNumber as number) || undefined,
+          line: (result.metadata?.line as number) || (result.metadata?.lineNumber as number) || undefined,
+          chunkIndex: (result.metadata?.chunkIndex as number) || undefined,
+          score: result.score,
+          content: (result.metadata?.content as string)?.substring(0, 200) || undefined, // Preview of content
+        }))
         : [];
 
       logger.info("RAG chat completed", {
